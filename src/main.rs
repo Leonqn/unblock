@@ -26,10 +26,10 @@ async fn main() -> Result<()> {
         Duration::from_millis(std::env::var("UNBLOCK_DNS_REQUEST_TIMEOUT_MS")?.parse()?);
     let client_addr: SocketAddr = "0.0.0.0:0".parse()?;
 
+    let blacklist = Arc::new(Blacklist::new(blacklist_dump).await?);
     let server = UdpSocket::bind(bind_addr).await?;
     let client = UdpSocket::bind(client_addr).await?;
     client.connect(dns_upstream).await?;
-    let blacklist = Arc::new(Blacklist::new(blacklist_dump).await?);
     let router = Arc::new(RouterClient::new(router_api, route_interface));
     let whitelist = Whitelist::new(blacklist.clone(), router).await?;
     let updater_handle =
