@@ -3,7 +3,7 @@ use std::{collections::HashSet, net::IpAddr, net::Ipv4Addr, sync::Arc, time::Dur
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use futures_util::{StreamExt, TryStreamExt};
-use log::{error, info};
+use log::{error, info, warn};
 use reqwest::{header::HeaderValue, Client, Response, StatusCode, Url};
 use tokio::{
     io::{stream_reader, AsyncBufReadExt, BufReader},
