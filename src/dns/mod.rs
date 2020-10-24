@@ -15,7 +15,7 @@ pub async fn start(
     request_timeout: Duration,
     whitelist: Whitelist,
 ) {
-    let mut packet_buf = [0; 576];
+    let mut packet_buf = [0; 512];
     let mut ips = Vec::new();
     let mut questions = Vec::new();
     loop {
