@@ -53,7 +53,7 @@ impl Blacklist {
             interval.next().await;
             info!("Start updating blacklist");
             if let Err(err) = self.update_if_needed().await {
-                error!("Error occurred while updating blacklist: {}", err);
+                error!("Error occurred while updating blacklist: {:#}", err);
             }
         }
     }

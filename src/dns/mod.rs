@@ -41,7 +41,7 @@ pub async fn start(
         .await;
 
         if let Err(e) = handle_fut {
-            error!("got error while handling request: {:?}", e);
+            error!("got error while handling request: {:#}", e);
         }
     }
 }
