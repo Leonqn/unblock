@@ -5,6 +5,8 @@ use tokio::{net::UdpSocket, time::timeout};
 
 use crate::whitelist::Whitelist;
 
+use self::packet::extract_questions;
+
 mod packet;
 
 pub async fn start(
@@ -15,15 +17,18 @@ pub async fn start(
 ) {
     let mut packet_buf = [0; 576];
     let mut ips = Vec::new();
+    let mut questions = Vec::new();
     loop {
         let handle_fut = async {
             let (bytes_read, sender) = server.recv_from(&mut packet_buf).await?;
+            questions.clear();
+            extract_questions(&packet_buf, &mut questions)?;
             let response = timeout(
                 request_timeout,
                 handle_request(&mut client, &mut packet_buf, bytes_read),
             )
-            .await??;
-
+            .await
+            .with_context(|| format!("Questions: {:?}", questions))??;
             ips.clear();
             packet::extract_ips(response, &mut ips)
                 .with_context(|| format!("Received packet: {:x?}", response))?;

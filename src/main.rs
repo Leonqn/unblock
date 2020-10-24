@@ -27,11 +27,11 @@ async fn main() -> Result<()> {
     let client_addr: SocketAddr = "0.0.0.0:0".parse()?;
 
     let blacklist = Arc::new(Blacklist::new(blacklist_dump).await?);
+    let router = Arc::new(RouterClient::new(router_api, route_interface));
+    let whitelist = Whitelist::new(blacklist.clone(), router).await?;
     let server = UdpSocket::bind(bind_addr).await?;
     let client = UdpSocket::bind(client_addr).await?;
     client.connect(dns_upstream).await?;
-    let router = Arc::new(RouterClient::new(router_api, route_interface));
-    let whitelist = Whitelist::new(blacklist.clone(), router).await?;
     let updater_handle =
         tokio::spawn(async move { blacklist.start_updating(blacklist_update_interval_s).await });
     let dns_handle =
