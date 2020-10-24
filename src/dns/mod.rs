@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use log::error;
+use log::{error, info};
 use std::time::Duration;
 use tokio::{net::UdpSocket, time::timeout};
 
@@ -32,7 +32,9 @@ pub async fn start(
             ips.clear();
             packet::extract_ips(response, &mut ips)
                 .with_context(|| format!("Received packet: {:x?}", response))?;
-            whitelist.whitelist_if_needed(&ips).await?;
+            if whitelist.whitelist(&ips).await? {
+                info!("Whitelisted: questions - {:?}, ips - {:?}", questions, ips);
+            }
             server.send_to(response, sender).await?;
             Ok::<_, anyhow::Error>(())
         }

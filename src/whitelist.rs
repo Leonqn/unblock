@@ -2,7 +2,6 @@ use std::{collections::HashSet, net::Ipv4Addr, sync::Arc};
 
 use crate::{blacklist::Blacklist, router_client::RouterClient};
 use anyhow::Result;
-use log::info;
 use tokio::sync::Mutex;
 
 pub struct Whitelist {
@@ -21,20 +20,21 @@ impl Whitelist {
         })
     }
 
-    pub async fn whitelist_if_needed(&self, ips: &[Ipv4Addr]) -> Result<()> {
+    pub async fn whitelist(&self, ips: &[Ipv4Addr]) -> Result<bool> {
         let mut whitelisted = self.whitelisted.lock().await;
         let need_whitelist = ips
             .iter()
             .filter(|ip| self.blacklist.contains(**ip) && !whitelisted.contains(ip))
             .copied()
             .collect::<Vec<_>>();
-        if !need_whitelist.is_empty() {
-            info!("Whitelisting {:?}", need_whitelist);
+        if need_whitelist.is_empty() {
+            Ok(false)
+        } else {
             self.router_client.add_routes(&need_whitelist).await?;
             for ip in need_whitelist {
                 whitelisted.insert(ip);
             }
+            Ok(true)
         }
-        Ok(())
     }
 }
