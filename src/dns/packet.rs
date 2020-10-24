@@ -42,21 +42,6 @@ pub fn extract_questions(dns_request: &[u8], questions: &mut Vec<DnsQuestion>) -
     Ok(())
 }
 
-fn parse_qname<'a>(qname: &'a [u8]) -> Option<impl Iterator<Item = char> + 'a> {
-    let mut qname_iter = qname.iter();
-    let label_len = u8::from_be(*qname_iter.next()?);
-
-    Some(qname_iter.scan(label_len, |label_len, label_part| {
-        if *label_len == 0 {
-            *label_len = u8::from_be(*label_part);
-            Some('.')
-        } else {
-            *label_len -= 1;
-            Some(char::from(*label_part))
-        }
-    }))
-}
-
 pub fn extract_ips(dns_response: &[u8], ips: &mut Vec<Ipv4Addr>) -> Result<()> {
     let answers = dns_response
         .get_u16_be(6)
@@ -70,6 +55,21 @@ pub fn extract_ips(dns_response: &[u8], ips: &mut Vec<Ipv4Addr>) -> Result<()> {
         .ok_or_else(|| anyhow!("can't find questions count"))?;
     let answers_start = find_answers_start_idx(dns_response, questions)?;
     find_ips(dns_response, answers, answers_start, ips)
+}
+
+fn parse_qname<'a>(qname: &'a [u8]) -> Option<impl Iterator<Item = char> + 'a> {
+    let mut qname_iter = qname.iter();
+    let label_len = u8::from_be(*qname_iter.next()?);
+
+    Some(qname_iter.scan(label_len, |label_len, label_part| {
+        if *label_len == 0 {
+            *label_len = u8::from_be(*label_part);
+            Some('.')
+        } else {
+            *label_len -= 1;
+            Some(char::from(*label_part))
+        }
+    }))
 }
 
 fn find_ips(
