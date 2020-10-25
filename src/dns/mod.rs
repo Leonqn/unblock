@@ -115,8 +115,8 @@ async fn messages_handler(
     let mut senders = HashMap::new();
     let mut ips = Vec::new();
     let mut domains = Vec::new();
-
-    while let Some(message) = messages_rx.recv().await {
+    loop {
+        let message = messages_rx.recv().await.expect("Senders dropped");
         let handle_result = async {
             match message {
                 DnsMessage::Request { packet, sender } => {
