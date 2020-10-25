@@ -1,14 +1,13 @@
 use anyhow::{anyhow, Result};
 use std::{convert::TryInto, net::Ipv4Addr};
 
-#[derive(Debug)]
-pub struct DnsQuestion {
-    pub qtype: u16,
-    pub qclass: u16,
-    pub domain: String,
+pub fn get_id(dns_packet: &[u8]) -> Result<u16> {
+    dns_packet
+        .get_u16_be(0)
+        .ok_or_else(|| anyhow!("Dns packet less than 2 bytes"))
 }
 
-pub fn extract_questions(dns_request: &[u8], questions: &mut Vec<DnsQuestion>) -> Result<()> {
+pub fn extract_domains(dns_request: &[u8], domains: &mut Vec<String>) -> Result<()> {
     let questions_count = dns_request
         .get_u16_be(4)
         .ok_or_else(|| anyhow!("can't find questions count"))?;
@@ -26,17 +25,7 @@ pub fn extract_questions(dns_request: &[u8], questions: &mut Vec<DnsQuestion>) -
             .and_then(parse_qname)
             .ok_or_else(|| anyhow!("can't find qname"))?
             .collect();
-        let qtype = dns_request
-            .get_u16_be(domain_stop + 1)
-            .ok_or_else(|| anyhow!("can't find qtype count"))?;
-        let qclass = dns_request
-            .get_u16_be(domain_stop + 3)
-            .ok_or_else(|| anyhow!("can't find qclass count"))?;
-        questions.push(DnsQuestion {
-            qtype,
-            qclass,
-            domain,
-        });
+        domains.push(domain);
         questions_start += domain_stop + 5;
     }
     Ok(())
@@ -130,7 +119,7 @@ impl GetU16 for [u8] {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use super::{extract_ips, extract_questions};
+    use super::{extract_domains, extract_ips};
 
     #[test]
     fn test_extract_domains() {
@@ -138,11 +127,20 @@ mod tests {
         let dns_query = hex::decode(dns_query).unwrap();
 
         let mut questions = Vec::new();
-        extract_questions(&dns_query, &mut questions).unwrap();
+        extract_domains(&dns_query, &mut questions).unwrap();
         assert!(questions.len() == 1);
-        assert!(questions[0].domain == "api.browser.yandex.ru");
-        assert!(questions[0].qtype == 1);
-        assert!(questions[0].qclass == 1);
+        assert!(questions[0] == "api.browser.yandex.ru");
+    }
+
+    #[test]
+    fn test_extract_domains_from_response() {
+        let dns_query = "3c1e818000010004000000000e643237787865376a7568317573360a636c6f756466726f6e74036e65740000010001c00c000100010000001b000436c0622bc00c000100010000001b000436c06211c00c000100010000001b000436c062a2c00c000100010000001b000436c0629d";
+        let dns_query = hex::decode(dns_query).unwrap();
+
+        let mut questions = Vec::new();
+        extract_domains(&dns_query, &mut questions).unwrap();
+        assert!(questions.len() == 1);
+        assert!(questions[0] == "d27xxe7juh1us6.cloudfront.net");
     }
 
     #[test]

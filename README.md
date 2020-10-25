@@ -8,4 +8,3 @@
 - UNBLOCK_ROUTER_API - ссылка на апи роутера без аутентификации (192.168.1.1:79)
 - UNBLOCK_ROUTE_INTERFACE - название интерфейса, через который будет маршрутизироваться заблокированный ip адрес (OpenVPN1)
 - UNBLOCK_BLACKLIST_UPDATE_INTERVAL_SEC - период обновления дампа в секундах (3600)
-- UNBLOCK_DNS_REQUEST_TIMEOUT_MS - таймаут на запрос к dns upstream в миллисекундах (500)
