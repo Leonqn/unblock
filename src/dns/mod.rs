@@ -28,9 +28,9 @@ async fn requests_handler(
     let mut senders = HashMap::new();
     let mut ips = Vec::new();
     let mut domains = Vec::new();
+    let mut buf = [0; 512];
     loop {
         let handle_request = async {
-            let mut buf = [0; 512];
             let (bytes_read, sender) = socket.recv_from(&mut buf).await?;
             let dns_packet = &buf[0..bytes_read];
             let packet_id = packet::get_id(dns_packet)?;
