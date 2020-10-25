@@ -1,6 +1,10 @@
 use anyhow::Result;
 use log::{error, info};
-use std::{collections::HashMap, future::Future, net::SocketAddr};
+use std::{
+    collections::HashMap,
+    future::Future,
+    net::{Ipv4Addr, SocketAddr},
+};
 use tokio::net::UdpSocket;
 
 use crate::whitelist::Whitelist;
@@ -33,19 +37,7 @@ async fn requests_handler(
 
             if packet::is_response(dns_packet)? {
                 if let Some(sender) = senders.remove(&packet_id) {
-                    ips.clear();
-                    packet::extract_ips(dns_packet, &mut ips)?;
-                    match whitelist.whitelist(&ips).await?.as_slice() {
-                        [] => {}
-                        whitelisted => {
-                            domains.clear();
-                            packet::extract_domains(dns_packet, &mut domains)?;
-                            info!(
-                                "Whitelisted: domains - {:?}, ips - {:?}",
-                                domains, whitelisted
-                            );
-                        }
-                    }
+                    whitelist_if_needed(dns_packet, &mut whitelist, &mut ips, &mut domains).await?;
                     socket.send_to(dns_packet, &sender).await?;
                 }
                 Ok::<(), anyhow::Error>(())
@@ -60,4 +52,27 @@ async fn requests_handler(
             error!("Got error while handling request: {:#}", e);
         }
     }
+}
+
+async fn whitelist_if_needed(
+    dns_packet: &[u8],
+    whitelist: &mut Whitelist,
+    ips: &mut Vec<Ipv4Addr>,
+    domains: &mut Vec<String>,
+) -> Result<()> {
+    ips.clear();
+    domains.clear();
+    packet::extract_ips(dns_packet, ips)?;
+    match whitelist.whitelist(&ips).await?.as_slice() {
+        [] => {}
+        whitelisted => {
+            domains.clear();
+            packet::extract_domains(dns_packet, domains)?;
+            info!(
+                "Whitelisted: domains - {:?}, ips - {:?}",
+                domains, whitelisted
+            );
+        }
+    }
+    Ok(())
 }
