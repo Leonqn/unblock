@@ -1,13 +1,49 @@
 use anyhow::{anyhow, Result};
 use std::{convert::TryInto, net::Ipv4Addr};
 
-pub fn get_id(dns_packet: &[u8]) -> Result<u16> {
+#[derive(Debug)]
+pub struct DnsPacket {
+    buf: [u8; 512],
+    size: usize,
+}
+
+impl DnsPacket {
+    pub fn new(buf: [u8; 512], size: usize) -> Self {
+        Self { buf, size }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.buf[0..self.size]
+    }
+
+    pub fn is_response(&self) -> Result<bool> {
+        is_response(self.as_slice())
+    }
+
+    pub fn id(&self) -> Result<u16> {
+        get_id(self.as_slice())
+    }
+    pub fn extract_domains(&self, domains: &mut Vec<String>) -> Result<()> {
+        extract_domains(self.as_slice(), domains)
+    }
+    pub fn extract_ips(&self, ips: &mut Vec<Ipv4Addr>) -> Result<()> {
+        extract_ips(self.as_slice(), ips)
+    }
+}
+
+fn is_response(dns_packet: &[u8]) -> Result<bool> {
+    let flags = dns_packet.get(2).ok_or_else(|| anyhow!("Flags missing"))?;
+
+    Ok(flags >> 7 == 1)
+}
+
+fn get_id(dns_packet: &[u8]) -> Result<u16> {
     dns_packet
         .get_u16_be(0)
         .ok_or_else(|| anyhow!("Dns packet less than 2 bytes"))
 }
 
-pub fn extract_domains(dns_request: &[u8], domains: &mut Vec<String>) -> Result<()> {
+fn extract_domains(dns_request: &[u8], domains: &mut Vec<String>) -> Result<()> {
     let questions_count = dns_request
         .get_u16_be(4)
         .ok_or_else(|| anyhow!("can't find questions count"))?;
@@ -31,7 +67,7 @@ pub fn extract_domains(dns_request: &[u8], domains: &mut Vec<String>) -> Result<
     Ok(())
 }
 
-pub fn extract_ips(dns_response: &[u8], ips: &mut Vec<Ipv4Addr>) -> Result<()> {
+fn extract_ips(dns_response: &[u8], ips: &mut Vec<Ipv4Addr>) -> Result<()> {
     let answers = dns_response
         .get_u16_be(6)
         .ok_or_else(|| anyhow!("can't find answers count"))?;
@@ -119,17 +155,28 @@ impl GetU16 for [u8] {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use super::{extract_domains, extract_ips};
+    use super::{extract_domains, extract_ips, is_response};
+
+    #[test]
+    fn test_is_request() {
+        let dns_query = "ec1401000001000000000000067335357361730773746f726167650679616e646578036e65740000010001";
+        let request = hex::decode(dns_query).unwrap();
+        let dns_query = "3c1e818000010004000000000e643237787865376a7568317573360a636c6f756466726f6e74036e65740000010001c00c000100010000001b000436c0622bc00c000100010000001b000436c06211c00c000100010000001b000436c062a2c00c000100010000001b000436c0629d";
+        let response = hex::decode(dns_query).unwrap();
+
+        assert!(!is_response(&request).unwrap());
+        assert!(is_response(&response).unwrap());
+    }
 
     #[test]
     fn test_extract_domains() {
-        let dns_query = "828a81800001000100000000036170690762726f777365720679616e6465780272750000010001c00c000100010000011f0004d5b4c1ea";
+        let dns_query = "b97801000001000000000000067265706f72740a6170706d6574726963610679616e646578036e65740000010001";
         let dns_query = hex::decode(dns_query).unwrap();
 
         let mut questions = Vec::new();
         extract_domains(&dns_query, &mut questions).unwrap();
         assert!(questions.len() == 1);
-        assert!(questions[0] == "api.browser.yandex.ru");
+        assert!(questions[0] == "report.appmetrica.yandex.net");
     }
 
     #[test]
