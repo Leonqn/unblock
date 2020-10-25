@@ -117,28 +117,25 @@ async fn messages_handler(
     let mut domains = Vec::new();
 
     while let Some(message) = messages_rx.recv().await {
-        let handle_result = match message {
-            DnsMessage::Request { packet, sender } => {
-                async {
+        let handle_result = async {
+            match message {
+                DnsMessage::Request { packet, sender } => {
                     let packet_id = packet::get_id(packet.as_slice())?;
                     senders.insert(packet_id, sender);
                     dns_client.send(packet.as_slice()).await?;
                     Ok(())
                 }
-                .await
-            }
-            DnsMessage::Response { packet } => {
-                async {
+                DnsMessage::Response { packet } => {
                     let id = packet::get_id(packet.as_slice())?;
                     let sender = senders
                         .remove(&id)
-                        .ok_or_else(|| anyhow!("Sender for request with id ({}) missing", id))?;
+                        .ok_or_else(|| anyhow!("Sender for request with id ({}) is missing", id))?;
                     ips.clear();
                     packet::extract_ips(&packet.as_slice(), &mut ips)
                         .with_context(|| format!("Received packet: {:x?}", packet.as_slice()))?;
                     match whitelist.whitelist(&ips).await?.as_slice() {
                         [] => {}
-                        [whitelisted @ ..] => {
+                        whitelisted => {
                             domains.clear();
                             packet::extract_domains(&packet.as_slice(), &mut domains)?;
                             info!(
@@ -150,10 +147,9 @@ async fn messages_handler(
                     dns_server.send_to(&packet.as_slice(), &sender).await?;
                     Ok::<(), anyhow::Error>(())
                 }
-                .await
             }
         };
-        if let Err(err) = handle_result {
+        if let Err(err) = handle_result.await {
             error!("Got error while sending response {:#}", err);
         }
     }
