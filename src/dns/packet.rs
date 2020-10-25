@@ -1,49 +1,19 @@
 use anyhow::{anyhow, Result};
 use std::{convert::TryInto, net::Ipv4Addr};
 
-#[derive(Debug)]
-pub struct DnsPacket {
-    buf: [u8; 512],
-    size: usize,
-}
-
-impl DnsPacket {
-    pub fn new(buf: [u8; 512], size: usize) -> Self {
-        Self { buf, size }
-    }
-
-    pub fn as_slice(&self) -> &[u8] {
-        &self.buf[0..self.size]
-    }
-
-    pub fn is_response(&self) -> Result<bool> {
-        is_response(self.as_slice())
-    }
-
-    pub fn id(&self) -> Result<u16> {
-        get_id(self.as_slice())
-    }
-    pub fn extract_domains(&self, domains: &mut Vec<String>) -> Result<()> {
-        extract_domains(self.as_slice(), domains)
-    }
-    pub fn extract_ips(&self, ips: &mut Vec<Ipv4Addr>) -> Result<()> {
-        extract_ips(self.as_slice(), ips)
-    }
-}
-
-fn is_response(dns_packet: &[u8]) -> Result<bool> {
+pub fn is_response(dns_packet: &[u8]) -> Result<bool> {
     let flags = dns_packet.get(2).ok_or_else(|| anyhow!("Flags missing"))?;
 
     Ok(flags >> 7 == 1)
 }
 
-fn get_id(dns_packet: &[u8]) -> Result<u16> {
+pub fn get_id(dns_packet: &[u8]) -> Result<u16> {
     dns_packet
         .get_u16_be(0)
         .ok_or_else(|| anyhow!("Dns packet less than 2 bytes"))
 }
 
-fn extract_domains(dns_request: &[u8], domains: &mut Vec<String>) -> Result<()> {
+pub fn extract_domains(dns_request: &[u8], domains: &mut Vec<String>) -> Result<()> {
     let questions_count = dns_request
         .get_u16_be(4)
         .ok_or_else(|| anyhow!("can't find questions count"))?;
@@ -67,7 +37,7 @@ fn extract_domains(dns_request: &[u8], domains: &mut Vec<String>) -> Result<()> 
     Ok(())
 }
 
-fn extract_ips(dns_response: &[u8], ips: &mut Vec<Ipv4Addr>) -> Result<()> {
+pub fn extract_ips(dns_response: &[u8], ips: &mut Vec<Ipv4Addr>) -> Result<()> {
     let answers = dns_response
         .get_u16_be(6)
         .ok_or_else(|| anyhow!("can't find answers count"))?;

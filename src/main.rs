@@ -25,12 +25,10 @@ async fn main() -> Result<()> {
     let blacklist = Arc::new(Blacklist::new(blacklist_dump).await?);
     let router = Arc::new(RouterClient::new(router_api, route_interface));
     let whitelist = Whitelist::new(blacklist.clone(), router).await?;
-    let updater_handle = async move {
-        tokio::spawn(async move { blacklist.start_updating(blacklist_update_interval_s).await })
-            .await?;
-        Ok(())
-    };
-    let dns_handle = dns::start_server(bind_addr, dns_upstream, whitelist);
+    let updater_handle =
+        tokio::spawn(async move { blacklist.start_updating(blacklist_update_interval_s).await });
+    let dns_handle = tokio::spawn(dns::create_server(bind_addr, dns_upstream, whitelist).await?);
+
     info!("Service spawned");
     tokio::try_join!(updater_handle, dns_handle)?;
     Ok(())
