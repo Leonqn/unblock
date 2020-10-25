@@ -150,7 +150,7 @@ async fn messages_handler(
             }
         };
         if let Err(err) = handle_result.await {
-            error!("Got error while sending response {:#}", err);
+            error!("Got error while sending response: {:#}", err);
         }
     }
 }
