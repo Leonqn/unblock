@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 
 use crate::whitelist::Whitelist;
 
-mod packet;
+mod message;
 
 pub async fn create_server(
     bind_addr: SocketAddr,
@@ -17,7 +17,7 @@ pub async fn create_server(
     whitelist: Whitelist,
 ) -> Result<impl Future<Output = ()>> {
     let socket = UdpSocket::bind(bind_addr).await?;
-    Ok(requests_handler(socket, whitelist, dns_upstream_addr))
+    Ok(t())
 }
 
 async fn requests_handler(
