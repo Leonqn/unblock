@@ -10,7 +10,6 @@ edition = "2018"
 anyhow = "1"
 log = "0.4"
 env_logger = "0.8"
-hex = "0.4"
 reqwest = { version = "0.10", features = ["stream", "gzip"] }
 tokio = {version = "0.2", features = ["macros", "udp", "time", "io-util", "rt-threaded", "sync"]}
 arc-swap = "0.4"
