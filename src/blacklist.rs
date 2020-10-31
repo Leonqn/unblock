@@ -3,7 +3,7 @@ use std::{collections::HashSet, net::IpAddr, net::Ipv4Addr, sync::Arc, time::Dur
 use anyhow::{anyhow, Result};
 use arc_swap::ArcSwap;
 use futures_util::{StreamExt, TryStreamExt};
-use log::{error, info, warn};
+use log::{error, info};
 use reqwest::{header::HeaderValue, Client, Response, StatusCode, Url};
 use tokio::{
     io::{stream_reader, AsyncBufReadExt, BufReader},
@@ -107,11 +107,7 @@ async fn parse_csv_dump<ABR: AsyncBufReadExt + Unpin>(
                 .filter(|ip| !ip.is_empty())
                 .filter_map(|ip| match ip.parse() {
                     Ok(IpAddr::V4(addr)) => Some(addr),
-                    Ok(IpAddr::V6(_)) => None,
-                    Err(err) => {
-                        warn!("ip parsing error. not_ip: {}, error: {}", ip, err);
-                        None
-                    }
+                    _ => None,
                 })
                 .for_each(|ip| {
                     parsed_ips.insert(ip);
