@@ -34,7 +34,7 @@ pub async fn create_server(
 
 async fn requests_handler(
     mut socket: UdpSocket,
-    whitelisted: HashSet<Ipv4Addr>,
+    mut whitelisted: HashSet<Ipv4Addr>,
     router_client: Arc<RouterClient>,
     blacklist: Arc<Blacklist>,
     dns_upstream_addr: SocketAddr,
@@ -55,7 +55,10 @@ async fn requests_handler(
                 MessageType::Response => {
                     if let Some(sender) = senders.remove(&message.header.id) {
                         let blocked = find_blocked(&message, &whitelisted, &blacklist);
-                        whitelist(&router_client, &message, &blocked).await?;
+                        if !blocked.is_empty() {
+                            whitelist_and_log(&router_client, &message, &blocked).await?;
+                            whitelisted.extend(blocked)
+                        }
                         socket.send_to(dns_packet, &sender).await?;
                     }
                     Ok(())
@@ -89,17 +92,15 @@ fn find_blocked(
         .collect()
 }
 
-async fn whitelist(
+async fn whitelist_and_log(
     router_client: &RouterClient,
     message: &Message<'_>,
     blocked: &[Ipv4Addr],
 ) -> Result<()> {
-    if !blocked.is_empty() {
-        router_client.add_routes(&blocked).await?;
-        info!(
-            "Whitelisted: {:?}, questions: {:?}",
-            blocked, &message.questions
-        )
-    }
+    router_client.add_routes(&blocked).await?;
+    info!(
+        "Whitelisted: {:?}, questions: {:?}",
+        blocked, &message.questions
+    );
     Ok(())
 }
