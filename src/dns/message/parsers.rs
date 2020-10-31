@@ -106,10 +106,11 @@ fn parse_name_and_pointer<'a>(
     packet: &'a [u8],
 ) -> IResult<&'a [u8], Vec<&'a str>> {
     let parse_pointer_or_zero = alt((parse_pointer, map(tag("\0"), |_| 0)));
-    let (rest, (mut name, pointer)) = many_till(parse_label, parse_pointer_or_zero)(records)?;
+    let parse_name = many_till(parse_label, parse_pointer_or_zero);
+    let (rest, (mut name, pointer)) = parse_name(records)?;
     if pointer != 0 {
         if let Some(pointed) = packet.get(pointer as usize..) {
-            let (_, pointed_names) = parse_name(pointed)?;
+            let (_, pointed_names) = parse_name_and_pointer(pointed, packet)?;
             name.extend_from_slice(&pointed_names);
         } else {
             return Err(nom::Err::Failure((rest, ErrorKind::MapOpt)));

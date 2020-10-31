@@ -95,6 +95,7 @@ pub enum ResourceData<'a> {
 mod tests {
     use super::{Flags, Header, Message, MessageType, Question, ResourceData, ResourceRecord};
     use anyhow::Result;
+    use pretty_assertions::assert_eq;
     use std::{collections::HashMap, time::Duration};
 
     #[test]
@@ -280,6 +281,50 @@ mod tests {
                     ttl: Duration::from_secs(10),
                     data: ResourceData::Other(b"\x19\x66\x61\x6b\x65\x2d\x66\x6f\x72\x2d\x6e\x65\x67\x61\x74\x69\x76\x65\x2d\x63\x61\x63\x68\x69\x6e\x67\x07\x61\x64\x67\x75\x61\x72\x64\x03\x63\x6f\x6d\x00\x0a\x68\x6f\x73\x74\x6d\x61\x73\x74\x65\x72\xc0\x0c\x00\x01\x88\x94\x00\x00\x07\x08\x00\x00\x03\x84\x00\x09\x3a\x80\x00\x01\x51\x80")
                 }]),
+                additional: None,
+            },
+        );
+
+        hashmap.insert(
+            include_bytes!("../../../test/dns_packets/a_cname_www.youtube.com.bin"),
+            Message {
+                header: Header {
+                    id: 0xb45e,
+                    flags: Flags {
+                        message_type: MessageType::Response,
+                    },
+                    questions: 1,
+                    answer_resource_records: 3,
+                    authority_resource_records: 0,
+                    additional_resource_records: 0,
+                },
+                questions: Some(vec![Question {
+                    name: vec!["www", "youtube", "com"],
+                    class: 1,
+                    type_: 1,
+                }]),
+                answer: Some(vec![ResourceRecord {
+                    name: vec!["www", "youtube", "com"],
+                    class: 1,
+                    type_: 5,
+                    ttl: Duration::from_secs(222),
+                    data: ResourceData::Other(b"\x0a\x79\x6f\x75\x74\x75\x62\x65\x2d\x75\x69\x01\x6c\x06\x67\x6f\x6f\x67\x6c\x65\xc0\x18")
+                },
+                ResourceRecord {
+                    name: vec!["youtube-ui", "l", "google", "com"],
+                    class: 1,
+                    type_: 5,
+                    ttl: Duration::from_secs(222),
+                    data: ResourceData::Other(b"\x0c\x77\x69\x64\x65\x2d\x79\x6f\x75\x74\x75\x62\x65\xc0\x38"),
+                },ResourceRecord {
+                    name: vec!["wide-youtube", "l", "google", "com"],
+                    class: 1,
+                    type_: 1,
+                    ttl: Duration::from_secs(222),
+                    data: ResourceData::Ipv4("64.233.161.198".parse().unwrap()),
+                },
+                ]),
+                authority: None,
                 additional: None,
             },
         );
