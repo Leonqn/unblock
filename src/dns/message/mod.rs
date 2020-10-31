@@ -17,7 +17,7 @@ impl Message<'_> {
         match parsers::parse_message(packet) {
             Ok((_, msg)) => Ok(msg),
             Err(err) => Err(anyhow!(
-                "got error while parsing packet. Err: {:#}, raw_packet: {:#04X?}",
+                "got error while parsing packet. Err: {:#}, raw_packet: {:02X?}",
                 err,
                 packet
             )),
