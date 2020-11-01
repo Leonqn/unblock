@@ -30,8 +30,8 @@ pub async fn create_unblocker(
 }
 
 enum Message {
-    Unblock(Vec<Ipv4Addr>),
-    NewBlacklist(HashSet<Ipv4Addr>),
+    ResolvedIps(Vec<Ipv4Addr>),
+    Blacklist(HashSet<Ipv4Addr>),
 }
 
 async fn handle_message(
@@ -41,7 +41,7 @@ async fn handle_message(
     unblocked: &mut HashSet<Ipv4Addr>,
 ) -> Result<()> {
     match message {
-        Message::Unblock(ips) => {
+        Message::ResolvedIps(ips) => {
             let blocked = ips
                 .iter()
                 .filter(|ip| blacklist.contains(&ip) && !unblocked.contains(&ip))
@@ -53,7 +53,7 @@ async fn handle_message(
                 unblocked.extend(blocked);
             }
         }
-        Message::NewBlacklist(new_blacklist) => {
+        Message::Blacklist(new_blacklist) => {
             info!("Received blacklist with {} items", new_blacklist.len());
             *blacklist = new_blacklist;
             let removed = unblocked
@@ -77,6 +77,6 @@ fn merge_receivers(
     blaklists_receiver: UnboundedReceiver<HashSet<Ipv4Addr>>,
 ) -> impl Stream<Item = Message> + Unpin {
     ips_receiver
-        .map(Message::Unblock)
-        .merge(blaklists_receiver.map(Message::NewBlacklist))
+        .map(Message::ResolvedIps)
+        .merge(blaklists_receiver.map(Message::Blacklist))
 }

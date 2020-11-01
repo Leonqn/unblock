@@ -22,7 +22,7 @@ pub async fn create_blacklist_receiver(
         .expect("Receiver dropped");
     let etag = initial_blacklist.etag;
 
-    Ok(messages_handler(
+    Ok(blacklist_receiver(
         blacklist_sender,
         blacklist_url,
         update_inverval,
@@ -50,7 +50,7 @@ impl Versioned {
     }
 }
 
-async fn messages_handler(
+async fn blacklist_receiver(
     blacklist_sender: UnboundedSender<HashSet<Ipv4Addr>>,
     blacklist_url: Url,
     update_inverval: Duration,
@@ -62,7 +62,7 @@ async fn messages_handler(
 
     loop {
         interval.tick().await;
-        let handle_message = async {
+        let receive_blacklist = async {
             let maybe_new_blacklist = match &etag {
                 Some(etag) => {
                     try_get_new_blacklist(&http, blacklist_url.clone(), etag.clone()).await?
@@ -79,7 +79,7 @@ async fn messages_handler(
             Ok::<_, anyhow::Error>(())
         };
 
-        if let Err(e) = handle_message.await {
+        if let Err(e) = receive_blacklist.await {
             error!("Got error while handling dns message: {:#}", e);
         }
     }

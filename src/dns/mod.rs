@@ -17,10 +17,10 @@ pub async fn create_server(
     ips_sender: UnboundedSender<Vec<Ipv4Addr>>,
 ) -> Result<impl Future<Output = ()>> {
     let socket = UdpSocket::bind(bind_addr).await?;
-    Ok(requests_handler(socket, dns_upstream_addr, ips_sender))
+    Ok(messages_handler(socket, dns_upstream_addr, ips_sender))
 }
 
-async fn requests_handler(
+async fn messages_handler(
     mut socket: UdpSocket,
     dns_upstream_addr: SocketAddr,
     ips_sender: UnboundedSender<Vec<Ipv4Addr>>,
@@ -28,7 +28,7 @@ async fn requests_handler(
     let mut senders = HashMap::new();
     let mut buf = [0; 512];
     loop {
-        let handle_request = async {
+        let handle_message = async {
             let (bytes_read, sender) = socket.recv_from(&mut buf).await?;
             let dns_packet = &buf[0..bytes_read];
             let message = Message::from_packet(dns_packet)?;
@@ -49,7 +49,7 @@ async fn requests_handler(
             }
         };
 
-        if let Err(e) = handle_request.await {
+        if let Err(e) = handle_message.await {
             error!("Got error while handling dns message: {:#}", e);
         }
     }
