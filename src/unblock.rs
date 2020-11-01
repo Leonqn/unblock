@@ -20,9 +20,9 @@ pub async fn create_unblocker(
     Ok(async move {
         loop {
             let message = messages.next().await.expect("Senders dropped");
-            let process_message =
+            let handle_message =
                 handle_message(message, &router_client, &mut blacklist, &mut unblocked);
-            if let Err(e) = process_message.await {
+            if let Err(e) = handle_message.await {
                 error!("Got error while handling whitelist request: {:#}", e);
             }
         }
