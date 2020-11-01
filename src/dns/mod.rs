@@ -1,15 +1,11 @@
 use anyhow::Result;
-use log::{error, info};
+use log::error;
 use std::{
     collections::HashMap,
-    collections::HashSet,
     future::Future,
     net::{Ipv4Addr, SocketAddr},
-    sync::Arc,
 };
-use tokio::net::UdpSocket;
-
-use crate::{blacklist::Blacklist, router_client::RouterClient};
+use tokio::{net::UdpSocket, sync::mpsc::UnboundedSender};
 
 use self::message::{Message, MessageType, ResourceData};
 
@@ -18,26 +14,16 @@ mod message;
 pub async fn create_server(
     bind_addr: SocketAddr,
     dns_upstream_addr: SocketAddr,
-    router_client: Arc<RouterClient>,
-    blacklist: Arc<Blacklist>,
+    ips_sender: UnboundedSender<Vec<Ipv4Addr>>,
 ) -> Result<impl Future<Output = ()>> {
     let socket = UdpSocket::bind(bind_addr).await?;
-    let whitelisted = router_client.get_routed().await?;
-    Ok(requests_handler(
-        socket,
-        whitelisted,
-        router_client,
-        blacklist,
-        dns_upstream_addr,
-    ))
+    Ok(requests_handler(socket, dns_upstream_addr, ips_sender))
 }
 
 async fn requests_handler(
     mut socket: UdpSocket,
-    mut whitelisted: HashSet<Ipv4Addr>,
-    router_client: Arc<RouterClient>,
-    blacklist: Arc<Blacklist>,
     dns_upstream_addr: SocketAddr,
+    ips_sender: UnboundedSender<Vec<Ipv4Addr>>,
 ) {
     let mut senders = HashMap::new();
     let mut buf = [0; 512];
@@ -54,11 +40,8 @@ async fn requests_handler(
                 }
                 MessageType::Response => {
                     if let Some(sender) = senders.remove(&message.header.id) {
-                        let blocked = find_blocked(&message, &whitelisted, &blacklist);
-                        if !blocked.is_empty() {
-                            whitelist_and_log(&router_client, &message, &blocked).await?;
-                            whitelisted.extend(blocked)
-                        }
+                        let ips = get_ips(&message);
+                        ips_sender.send(ips).expect("Receiver dropped");
                         socket.send_to(dns_packet, &sender).await?;
                     }
                     Ok(())
@@ -67,19 +50,17 @@ async fn requests_handler(
         };
 
         if let Err(e) = handle_request.await {
-            error!("Got error while handling request: {:#}", e);
+            error!("Got error while handling dns message: {:#}", e);
         }
     }
 }
 
-fn find_blocked(
-    message: &Message,
-    whitelisted: &HashSet<Ipv4Addr>,
-    blacklist: &Blacklist,
-) -> Vec<Ipv4Addr> {
+fn get_ips(message: &Message) -> Vec<Ipv4Addr> {
     message
         .answer
         .iter()
+        .chain(&message.authority)
+        .chain(&message.additional)
         .flatten()
         .filter_map(|r| {
             if let ResourceData::Ipv4(ip) = &r.data {
@@ -88,19 +69,5 @@ fn find_blocked(
                 None
             }
         })
-        .filter(|ip| blacklist.contains(*ip) && !whitelisted.contains(ip))
         .collect()
-}
-
-async fn whitelist_and_log(
-    router_client: &RouterClient,
-    message: &Message<'_>,
-    blocked: &[Ipv4Addr],
-) -> Result<()> {
-    router_client.add_routes(&blocked).await?;
-    info!(
-        "Whitelisted: {:?}, questions: {:?}",
-        blocked, &message.questions
-    );
-    Ok(())
 }

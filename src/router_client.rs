@@ -41,12 +41,31 @@ impl RouterClient {
         Ok(())
     }
 
+    pub async fn remove_routes(&self, addrs: &[Ipv4Addr]) -> Result<()> {
+        let romove_addrs_tasks = addrs.iter().map(|addr| self.remove_route(*addr));
+        futures_util::future::try_join_all(romove_addrs_tasks).await?;
+        Ok(())
+    }
+
+    async fn remove_route(&self, addr: Ipv4Addr) -> Result<()> {
+        let request_body = format!(
+            r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}","no":true,"name":"{interface}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
+            interface = &self.vpn_interface,
+            host = addr
+        );
+        self.send_rci(request_body).await
+    }
+
     async fn add_route(&self, addr: Ipv4Addr) -> Result<()> {
         let request_body = format!(
             r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
             interface = &self.vpn_interface,
             host = addr
         );
+        self.send_rci(request_body).await
+    }
+
+    async fn send_rci(&self, request_body: String) -> Result<()> {
         let response = self
             .http
             .post(self.base_url.join("/rci")?)

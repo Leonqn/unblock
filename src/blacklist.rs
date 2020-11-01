@@ -1,19 +1,34 @@
-use std::{collections::HashSet, net::IpAddr, net::Ipv4Addr, sync::Arc, time::Duration};
+use std::{collections::HashSet, future::Future, net::IpAddr, net::Ipv4Addr, time::Duration};
 
 use anyhow::{anyhow, Result};
-use arc_swap::ArcSwap;
-use futures_util::{StreamExt, TryStreamExt};
-use log::{error, info};
+use futures_util::TryStreamExt;
+use log::error;
 use reqwest::{header::HeaderValue, Client, Response, StatusCode, Url};
 use tokio::{
     io::{stream_reader, AsyncBufReadExt, BufReader},
+    sync::mpsc::UnboundedSender,
     time::interval,
 };
 
-pub struct Blacklist {
-    http: Client,
-    url: Url,
-    blacklist: ArcSwap<Versioned>,
+pub async fn create_blacklist_receiver(
+    blacklist_sender: UnboundedSender<HashSet<Ipv4Addr>>,
+    blacklist_url: Url,
+    update_inverval: Duration,
+) -> Result<impl Future<Output = ()>> {
+    let http = Client::builder().gzip(true).build()?;
+    let initial_blacklist = get_blacklist(&http, blacklist_url.clone()).await?;
+    blacklist_sender
+        .send(initial_blacklist.blacklist)
+        .expect("Receiver dropped");
+    let etag = initial_blacklist.etag;
+
+    Ok(messages_handler(
+        blacklist_sender,
+        blacklist_url,
+        update_inverval,
+        http,
+        etag,
+    ))
 }
 
 struct Versioned {
@@ -35,59 +50,59 @@ impl Versioned {
     }
 }
 
-impl Blacklist {
-    pub async fn new(url: Url) -> Result<Self> {
-        let http = Client::builder().gzip(true).build()?;
-        let blacklist = Versioned::from_response(http.get(url.clone()).send().await?).await?;
-        Ok(Self {
-            http,
-            url,
-            blacklist: ArcSwap::new(Arc::new(blacklist)),
-        })
-    }
+async fn messages_handler(
+    blacklist_sender: UnboundedSender<HashSet<Ipv4Addr>>,
+    blacklist_url: Url,
+    update_inverval: Duration,
+    http: Client,
+    mut etag: Option<HeaderValue>,
+) {
+    let mut interval = interval(update_inverval);
+    interval.tick().await;
 
-    pub async fn start_updating(&self, update_interval: Duration) {
-        let mut interval = Box::pin(interval(update_interval));
-        interval.next().await;
-        loop {
-            interval.next().await;
-            info!("Start updating blacklist");
-            if let Err(err) = self.update_if_needed().await {
-                error!("Error occurred while updating blacklist: {:#}", err);
+    loop {
+        interval.tick().await;
+        let handle_message = async {
+            let maybe_new_blacklist = match &etag {
+                Some(etag) => {
+                    try_get_new_blacklist(&http, blacklist_url.clone(), etag.clone()).await?
+                }
+                None => Some(get_blacklist(&http, blacklist_url.clone()).await?),
+            };
+
+            if let Some(new_blacklist) = maybe_new_blacklist {
+                etag = new_blacklist.etag;
+                blacklist_sender
+                    .send(new_blacklist.blacklist)
+                    .expect("Receiver dropped");
             }
-        }
-    }
-
-    pub fn contains(&self, addr: Ipv4Addr) -> bool {
-        self.blacklist.load().blacklist.contains(&addr)
-    }
-
-    async fn update_if_needed(&self) -> Result<()> {
-        let request = if let Some(etag) = &self.blacklist.load().etag {
-            self.http
-                .get(self.url.clone())
-                .header("If-None-Match", etag)
-        } else {
-            self.http.get(self.url.clone())
+            Ok::<_, anyhow::Error>(())
         };
-        let response = request.send().await?;
-        match response.status() {
-            StatusCode::NOT_MODIFIED => {
-                info!("Blacklist not modified");
-                Ok(())
-            }
-            StatusCode::OK => {
-                let updated = Versioned::from_response(response).await?;
-                info!(
-                    "Updated to version {:?} with {} items",
-                    updated.etag,
-                    updated.blacklist.len()
-                );
-                self.blacklist.store(Arc::new(updated));
-                Ok(())
-            }
-            code => Err(anyhow!("unknown status code {}", code)),
+
+        if let Err(e) = handle_message.await {
+            error!("Got error while handling dns message: {:#}", e);
         }
+    }
+}
+
+async fn get_blacklist(http: &Client, url: Url) -> Result<Versioned> {
+    Versioned::from_response(http.get(url).send().await?).await
+}
+
+async fn try_get_new_blacklist(
+    http: &Client,
+    url: Url,
+    etag: HeaderValue,
+) -> Result<Option<Versioned>> {
+    let request = http.get(url).header("If-None-Match", etag);
+    let response = request.send().await?;
+    match response.status() {
+        StatusCode::NOT_MODIFIED => Ok(None),
+        StatusCode::OK => {
+            let updated = Versioned::from_response(response).await?;
+            Ok(Some(updated))
+        }
+        code => Err(anyhow!("unknown status code {}", code)),
     }
 }
 
