@@ -21,7 +21,7 @@ pub async fn create_unblocker(
         loop {
             let message = messages.next().await.expect("Senders dropped");
             let process_message =
-                process_message(message, &router_client, &mut blacklist, &mut unblocked);
+                handle_message(message, &router_client, &mut blacklist, &mut unblocked);
             if let Err(e) = process_message.await {
                 error!("Got error while handling whitelist request: {:#}", e);
             }
@@ -34,7 +34,7 @@ enum Message {
     NewBlacklist(HashSet<Ipv4Addr>),
 }
 
-async fn process_message(
+async fn handle_message(
     message: Message,
     router_client: &RouterClient,
     blacklist: &mut HashSet<Ipv4Addr>,
