@@ -5,7 +5,7 @@ use nom::{
     branch::alt,
     bytes::complete::{tag, take},
     combinator::{cond, flat_map, map, map_opt, map_res},
-    error::ErrorKind,
+    error::{make_error, ErrorKind},
     multi::{count, many_till},
     number::complete::{be_u16, be_u32, be_u8},
     sequence::tuple,
@@ -106,14 +106,14 @@ fn parse_name_and_pointer<'a>(
     packet: &'a [u8],
 ) -> IResult<&'a [u8], Vec<&'a str>> {
     let parse_pointer_or_zero = alt((parse_pointer, map(tag("\0"), |_| 0)));
-    let parse_name = many_till(parse_label, parse_pointer_or_zero);
+    let mut parse_name = many_till(parse_label, parse_pointer_or_zero);
     let (rest, (mut name, pointer)) = parse_name(records)?;
     if pointer != 0 {
         if let Some(pointed) = packet.get(pointer as usize..) {
             let (_, pointed_names) = parse_name_and_pointer(pointed, packet)?;
             name.extend_from_slice(&pointed_names);
         } else {
-            return Err(nom::Err::Failure((rest, ErrorKind::MapOpt)));
+            return Err(nom::Err::Failure(make_error(rest, ErrorKind::MapOpt)));
         }
     }
     Ok((rest, name))
@@ -133,11 +133,13 @@ fn parse_name(label_part: &[u8]) -> IResult<&[u8], Vec<&str>> {
 }
 
 fn parse_pointer(label_part: &[u8]) -> IResult<&[u8], u16> {
-    let parser = tuple((
-        nom::bits::complete::tag(3u8, 2u8),
-        nom::bits::complete::take::<_, u16, _, (_, _)>(14u8),
-    ));
-    bits(map(parser, |(_, pointer)| pointer))(label_part)
+    let parser = |i| {
+        tuple((
+            nom::bits::complete::tag(3u8, 2u8),
+            nom::bits::complete::take::<_, u16, _, nom::error::Error<_>>(14u8),
+        ))(i)
+    };
+    map(bits(parser), |(_, pointer)| pointer)(label_part)
 }
 
 fn parse_label(label_part: &[u8]) -> IResult<&[u8], &str> {
@@ -145,7 +147,9 @@ fn parse_label(label_part: &[u8]) -> IResult<&[u8], &str> {
 }
 
 fn parse_flags(flags: &[u8]) -> IResult<&[u8], Flags> {
-    let qr_flag = bits(nom::bits::complete::take::<_, u8, _, (_, _)>(1usize));
+    let qr_flag = bits(nom::bits::complete::take::<_, u8, _, nom::error::Error<_>>(
+        1usize,
+    ));
     map(tuple((qr_flag, be_u8)), |(qr_flag, _)| {
         if qr_flag == 0 {
             Flags {
