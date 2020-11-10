@@ -27,9 +27,11 @@ impl RouterClient {
             .await?
             .bytes()
             .await?;
-        let routes: Vec<Route> = serde_json::from_slice(&response)?;
+        let routes: Routes = serde_json::from_slice(&response)?;
         Ok(routes
+            .routes()
             .into_iter()
+            .flatten()
             .filter(|r| r.interface == self.vpn_interface)
             .map(|r| r.host)
             .collect())
@@ -49,7 +51,7 @@ impl RouterClient {
 
     async fn remove_route(&self, addr: Ipv4Addr) -> Result<()> {
         let request_body = format!(
-            r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}","no":true,"name":"{interface}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
+            r#"[{{"ip":{{"route":{{"auto":false,"interface":"{interface}","host":"{host}","no":true,"name":"{interface}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
             interface = &self.vpn_interface,
             host = addr
         );
@@ -58,7 +60,7 @@ impl RouterClient {
 
     async fn add_route(&self, addr: Ipv4Addr) -> Result<()> {
         let request_body = format!(
-            r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
+            r#"[{{"ip":{{"route":{{"auto":false,"interface":"{interface}","host":"{host}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
             interface = &self.vpn_interface,
             host = addr
         );
@@ -79,6 +81,22 @@ impl RouterClient {
                 "Got unsucessful response from router {}",
                 response.text().await?
             ))
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Routes {
+    Routes(Vec<Route>),
+    None {},
+}
+
+impl Routes {
+    fn routes(self) -> Option<Vec<Route>> {
+        match self {
+            Routes::Routes(r) => Some(r),
+            Routes::None {} => None,
         }
     }
 }
