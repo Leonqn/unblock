@@ -21,15 +21,15 @@ async fn main() -> Result<()> {
         Duration::from_secs(std::env::var("UNBLOCK_BLACKLIST_UPDATE_INTERVAL_SEC")?.parse()?);
 
     let router_client = RouterClient::new(router_api, route_interface);
-    let (ip_tx, ip_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (ip_tx, unblock_requests_rx) = tokio::sync::mpsc::unbounded_channel();
     let (b_tx, b_rx) = tokio::sync::mpsc::unbounded_channel();
 
     let dns_handle = tokio::spawn(dns::create_server(bind_addr, dns_upstream, ip_tx).await?);
     let blacklist_handle = tokio::spawn(
-        blacklist::create_blacklist_receiver(b_tx, blacklist_dump, blacklist_update_interval_s)
-            .await?,
+        blacklist::create_blacklist_rx(b_tx, blacklist_dump, blacklist_update_interval_s).await?,
     );
-    let unblock_handle = tokio::spawn(unblock::create_unblocker(b_rx, ip_rx, router_client).await?);
+    let unblock_handle =
+        tokio::spawn(unblock::create_unblocker(b_rx, unblock_requests_rx, router_client).await?);
 
     info!("Service spawned");
     tokio::try_join!(dns_handle, blacklist_handle, unblock_handle)?;

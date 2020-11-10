@@ -1,11 +1,13 @@
 use anyhow::Result;
-use log::error;
+use log::{error, info};
 use std::{
     collections::HashMap,
     future::Future,
     net::{Ipv4Addr, SocketAddr},
 };
 use tokio::{net::UdpSocket, sync::mpsc::UnboundedSender};
+
+use crate::unblock::{UnblockRequest, UnblockResponse};
 
 use self::message::{Message, MessageType, ResourceData};
 
@@ -14,16 +16,20 @@ mod message;
 pub async fn create_server(
     bind_addr: SocketAddr,
     dns_upstream_addr: SocketAddr,
-    ips_sender: UnboundedSender<Vec<Ipv4Addr>>,
+    unblock_requests_tx: UnboundedSender<UnblockRequest>,
 ) -> Result<impl Future<Output = ()>> {
     let socket = UdpSocket::bind(bind_addr).await?;
-    Ok(messages_handler(socket, dns_upstream_addr, ips_sender))
+    Ok(messages_handler(
+        socket,
+        dns_upstream_addr,
+        unblock_requests_tx,
+    ))
 }
 
 async fn messages_handler(
     mut socket: UdpSocket,
     dns_upstream_addr: SocketAddr,
-    ips_sender: UnboundedSender<Vec<Ipv4Addr>>,
+    unblock_requests_tx: UnboundedSender<UnblockRequest>,
 ) {
     let mut senders = HashMap::new();
     let mut buf = [0; 512];
@@ -41,7 +47,13 @@ async fn messages_handler(
                 MessageType::Response => {
                     if let Some(sender) = senders.remove(&message.header.id) {
                         let ips = get_ips(&message);
-                        ips_sender.send(ips).expect("Receiver dropped");
+                        let (reply, response) = tokio::sync::oneshot::channel();
+                        unblock_requests_tx
+                            .send(UnblockRequest { ips, reply })
+                            .expect("Receiver dropped");
+                        if let UnblockResponse::Unblocked(ips) = response.await? {
+                            info!("Unblocked {:?} from message {:?}", ips, message)
+                        }
                         socket.send_to(dns_packet, &sender).await?;
                     }
                     Ok(())
