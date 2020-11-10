@@ -1,4 +1,4 @@
-use std::{collections::HashSet, future::Future, net::Ipv4Addr};
+use std::{collections::HashMap, collections::HashSet, future::Future, net::Ipv4Addr};
 
 use anyhow::Result;
 use log::{error, info};
@@ -50,6 +50,7 @@ async fn unblocker(
     mut unblocked: HashSet<Ipv4Addr>,
 ) {
     let mut blacklist = HashSet::new();
+    let mut waiters = HashMap::new();
     loop {
         let handle_message = async {
             match messages.next().await.expect("Senders dropped") {
@@ -61,8 +62,12 @@ async fn unblocker(
                         .copied()
                         .collect::<Vec<_>>();
                     if !blocked.is_empty() {
+                        waiters
+                            .entry(blocked.clone())
+                            .or_insert_with(Vec::new)
+                            .push(request.reply);
                         router_requests_tx
-                            .send(RouterRequest::Add(request))
+                            .send(RouterRequest::Add(blocked))
                             .expect("Receiver dropped");
                     } else {
                         let _ = request.reply.send(UnblockResponse::Skipped);
@@ -82,9 +87,15 @@ async fn unblocker(
                     }
                 }
 
-                Message::RouterResponse(RouterResponse::Added(request)) => {
-                    unblocked.extend(request.ips.iter().copied());
-                    let _ = request.reply.send(UnblockResponse::Unblocked(request.ips));
+                Message::RouterResponse(RouterResponse::Added(addrs)) => {
+                    unblocked.extend(addrs.iter().copied());
+                    for waiter in waiters.remove(&addrs).into_iter().flatten() {
+                        let _ = waiter.send(UnblockResponse::Unblocked(addrs.clone()));
+                    }
+                }
+
+                Message::RouterResponse(RouterResponse::AddError(addrs)) => {
+                    waiters.remove(&addrs);
                 }
                 Message::RouterResponse(RouterResponse::Removed(addrs)) => {
                     for ip in addrs {
@@ -102,14 +113,15 @@ async fn unblocker(
 
 #[derive(Debug)]
 enum RouterRequest {
-    Add(UnblockRequest),
+    Add(Vec<Ipv4Addr>),
     Remove(Vec<Ipv4Addr>),
 }
 
 #[derive(Debug)]
 enum RouterResponse {
-    Added(UnblockRequest),
+    Added(Vec<Ipv4Addr>),
     Removed(Vec<Ipv4Addr>),
+    AddError(Vec<Ipv4Addr>),
 }
 
 async fn router_handler(
@@ -118,13 +130,20 @@ async fn router_handler(
     responses_tx: UnboundedSender<RouterResponse>,
 ) {
     loop {
+        let msg = requests_rx.recv().await.expect("Senders dropped");
         let handle_message = async {
-            match requests_rx.recv().await.expect("Senders dropped") {
-                RouterRequest::Add(request) => {
-                    router_client.add_routes(&request.ips).await?;
-                    responses_tx
-                        .send(RouterResponse::Added(request))
-                        .expect("Receiver dropped")
+            match msg {
+                RouterRequest::Add(addrs) => {
+                    if let Err(err) = router_client.add_routes(&addrs).await {
+                        responses_tx
+                            .send(RouterResponse::AddError(addrs))
+                            .expect("Receiver dropped");
+                        return Err(err);
+                    } else {
+                        responses_tx
+                            .send(RouterResponse::Added(addrs))
+                            .expect("Receiver dropped");
+                    }
                 }
                 RouterRequest::Remove(addrs) => {
                     router_client.remove_routes(&addrs).await?;
