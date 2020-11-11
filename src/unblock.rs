@@ -280,7 +280,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_not_send_add_routes_when_there_is_pending_request() -> Result<()> {
+    async fn should_not_send_add_routes_and_insert_waiter_when_there_is_pending_request(
+    ) -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply, _) = oneshot::channel();
@@ -388,7 +389,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_update_blacklist_when_routes_removed() -> Result<()> {
+    async fn should_remove_ip_from_unblocked_when_routes_removed() -> Result<()> {
         let (router_tx, _) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let mut blacklist = [ip].iter().copied().collect();
@@ -410,7 +411,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_drop_waiters_when_routes_add_failed() -> Result<()> {
+    async fn should_drop_waiters_and_ignore_unblocked_when_routes_add_failed() -> Result<()> {
         let (router_tx, _) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply1, mut reply1_rx) = oneshot::channel();
