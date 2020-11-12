@@ -64,15 +64,13 @@ async fn unblocker(
             &mut unblocked,
             &mut blacklist,
             &mut waiters,
-        )
-        .await
-        {
+        ) {
             error!("Got error while handling message: {:#}", e);
         }
     }
 }
 
-async fn handle_message(
+fn handle_message(
     message: Message,
     router_requests_tx: &UnboundedSender<RouterRequest>,
     unblocked: &mut HashSet<Ipv4Addr>,
@@ -207,8 +205,8 @@ mod tests {
         oneshot::{self, error::TryRecvError},
     };
 
-    #[tokio::test]
-    async fn should_send_add_routes_when_ips_are_blocked() -> Result<()> {
+    #[test]
+    fn should_send_add_routes_when_ips_are_blocked() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply, _) = oneshot::channel();
@@ -224,15 +222,14 @@ mod tests {
             &mut HashSet::new(),
             &mut blacklist,
             &mut HashMap::new(),
-        )
-        .await?;
+        )?;
 
         assert_eq!(router_rx.try_recv().unwrap(), RouterRequest::Add(vec![ip]));
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_not_send_add_routes_when_ips_are_unblocked() -> Result<()> {
+    #[test]
+    fn should_not_send_add_routes_when_ips_are_unblocked() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply, _) = oneshot::channel();
@@ -249,15 +246,14 @@ mod tests {
             &mut unblocked,
             &mut blacklist,
             &mut HashMap::new(),
-        )
-        .await?;
+        )?;
 
         assert!(router_rx.try_recv().is_err());
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_not_send_add_routes_when_ips_arent_in_blacklist() -> Result<()> {
+    #[test]
+    fn should_not_send_add_routes_when_ips_arent_in_blacklist() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply, _) = oneshot::channel();
@@ -272,16 +268,14 @@ mod tests {
             &mut HashSet::new(),
             &mut HashSet::new(),
             &mut HashMap::new(),
-        )
-        .await?;
+        )?;
 
         assert!(router_rx.try_recv().is_err());
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_not_send_add_routes_and_insert_waiter_when_there_is_pending_request(
-    ) -> Result<()> {
+    #[test]
+    fn should_not_send_add_routes_and_insert_waiter_when_there_is_pending_request() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply, _) = oneshot::channel();
@@ -299,16 +293,15 @@ mod tests {
             &mut HashSet::new(),
             &mut blacklist,
             &mut pending_requests,
-        )
-        .await?;
+        )?;
 
         assert!(router_rx.try_recv().is_err());
         assert_eq!(pending_requests[[ip].as_ref()].len(), 2);
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_send_remove_routes_when_new_blacklist_does_not_contains_previously_unblocked(
+    #[test]
+    fn should_send_remove_routes_when_new_blacklist_does_not_contains_previously_unblocked(
     ) -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
@@ -323,8 +316,7 @@ mod tests {
             &mut unblocked,
             &mut blacklist,
             &mut HashMap::new(),
-        )
-        .await?;
+        )?;
 
         assert_eq!(
             router_rx.try_recv().unwrap(),
@@ -333,9 +325,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_not_send_remove_routes_when_new_blacklist_contains_all_previous_ips(
-    ) -> Result<()> {
+    #[test]
+    fn should_not_send_remove_routes_when_new_blacklist_contains_all_previous_ips() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let mut blacklist: HashSet<_> = [ip].iter().copied().collect();
@@ -348,15 +339,14 @@ mod tests {
             &mut unblocked,
             &mut blacklist,
             &mut HashMap::new(),
-        )
-        .await?;
+        )?;
 
         assert!(router_rx.try_recv().is_err());
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_update_unblocked_and_notify_waiters_when_routes_added() -> Result<()> {
+    #[test]
+    fn should_update_unblocked_and_notify_waiters_when_routes_added() -> Result<()> {
         let (router_tx, _) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply1, mut reply1_rx) = oneshot::channel();
@@ -373,8 +363,7 @@ mod tests {
             &mut unblocked,
             &mut blacklist,
             &mut pending_requests,
-        )
-        .await?;
+        )?;
 
         assert_eq!(
             reply1_rx.try_recv().unwrap(),
@@ -388,8 +377,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_remove_ip_from_unblocked_when_routes_removed() -> Result<()> {
+    #[test]
+    fn should_remove_ip_from_unblocked_when_routes_removed() -> Result<()> {
         let (router_tx, _) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let mut blacklist = [ip].iter().copied().collect();
@@ -403,15 +392,14 @@ mod tests {
             &mut unblocked,
             &mut blacklist,
             &mut pending_requests,
-        )
-        .await?;
+        )?;
 
         assert!(!unblocked.contains(&ip));
         Ok(())
     }
 
-    #[tokio::test]
-    async fn should_drop_waiters_and_ignore_unblocked_when_routes_add_failed() -> Result<()> {
+    #[test]
+    fn should_drop_waiters_and_ignore_unblocked_when_routes_add_failed() -> Result<()> {
         let (router_tx, _) = unbounded_channel();
         let ip = "127.0.0.1".parse().unwrap();
         let (reply1, mut reply1_rx) = oneshot::channel();
@@ -428,8 +416,7 @@ mod tests {
             &mut unblocked,
             &mut blacklist,
             &mut pending_requests,
-        )
-        .await?;
+        )?;
 
         assert_eq!(reply1_rx.try_recv(), Err(TryRecvError::Closed));
         assert_eq!(reply2_rx.try_recv(), Err(TryRecvError::Closed));
