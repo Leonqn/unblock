@@ -88,13 +88,13 @@ async fn handle_message(
                 .copied()
                 .collect::<Vec<_>>();
             if !blocked.is_empty() {
-                match waiters.entry(blocked.clone()) {
+                match waiters.entry(blocked) {
                     Entry::Occupied(mut waiters) => waiters.get_mut().push(request.reply),
                     Entry::Vacant(v) => {
-                        v.insert(vec![request.reply]);
                         router_requests_tx
-                            .send(RouterRequest::Add(blocked))
+                            .send(RouterRequest::Add(v.key().clone()))
                             .expect("Receiver dropped");
+                        v.insert(vec![request.reply]);
                     }
                 }
             } else {
