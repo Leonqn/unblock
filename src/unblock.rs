@@ -2,9 +2,11 @@ use std::{
     collections::HashMap,
     collections::{hash_map::Entry, HashSet},
     future::Future,
-    net::Ipv4Addr,
+    net::{Ipv4Addr, SocketAddr},
 };
 
+use crate::dns::message::Message as DnsMessage;
+use crate::router_client::RouterClient;
 use anyhow::Result;
 use log::{error, info};
 use tokio::{
@@ -12,32 +14,30 @@ use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
 };
 
-use crate::router_client::RouterClient;
-
 #[derive(Debug, Eq, PartialEq)]
 pub enum UnblockResponse {
-    Unblocked(Vec<Ipv4Addr>),
-    Skipped,
+    Completed(UnblockRequest),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct UnblockRequest {
-    pub ips: Vec<Ipv4Addr>,
-    pub reply: tokio::sync::oneshot::Sender<UnblockResponse>,
+    pub dns_response: Vec<u8>,
+    pub sender: SocketAddr,
 }
 
 pub async fn create_unblocker(
-    blaklist_rx: UnboundedReceiver<HashSet<Ipv4Addr>>,
-    unblock_requests_rx: UnboundedReceiver<UnblockRequest>,
+    blacklists: UnboundedReceiver<HashSet<Ipv4Addr>>,
+    requests: UnboundedReceiver<UnblockRequest>,
+    responses: UnboundedSender<UnblockResponse>,
     router_client: RouterClient,
 ) -> Result<impl Future<Output = ()>> {
     let unblocked = router_client.get_routed().await?;
     let (router_requests_tx, router_requests_rx) = tokio::sync::mpsc::unbounded_channel();
     let (router_responses_tx, router_responses_rx) = tokio::sync::mpsc::unbounded_channel();
-    let messages = merge_rxs(unblock_requests_rx, blaklist_rx, router_responses_rx);
+    let messages = merge_rxs(requests, blacklists, router_responses_rx);
 
     let router_handler = router_handler(router_client, router_requests_rx, router_responses_tx);
-    let unblocker = unblocker(messages, router_requests_tx, unblocked);
+    let unblocker = unblocker(messages, router_requests_tx, responses, unblocked);
     Ok(async move {
         tokio::join!(router_handler, unblocker);
     })
@@ -52,6 +52,7 @@ enum Message {
 async fn unblocker(
     mut messages: impl Stream<Item = Message> + Unpin,
     router_requests_tx: UnboundedSender<RouterRequest>,
+    unblock_responses_tx: UnboundedSender<UnblockResponse>,
     mut unblocked: HashSet<Ipv4Addr>,
 ) {
     let mut blacklist = HashSet::new();
@@ -61,6 +62,7 @@ async fn unblocker(
         if let Err(e) = handle_message(
             message,
             &router_requests_tx,
+            &unblock_responses_tx,
             &mut unblocked,
             &mut blacklist,
             &mut waiters,
@@ -73,30 +75,33 @@ async fn unblocker(
 fn handle_message(
     message: Message,
     router_requests_tx: &UnboundedSender<RouterRequest>,
+    unblock_responses_tx: &UnboundedSender<UnblockResponse>,
     unblocked: &mut HashSet<Ipv4Addr>,
     blacklist: &mut HashSet<Ipv4Addr>,
-    waiters: &mut HashMap<Vec<Ipv4Addr>, Vec<tokio::sync::oneshot::Sender<UnblockResponse>>>,
+    waiting_responses: &mut HashMap<Vec<Ipv4Addr>, Vec<UnblockRequest>>,
 ) -> Result<()> {
     match message {
         Message::UnblockRequest(request) => {
-            let blocked = request
-                .ips
-                .iter()
-                .filter(|ip| blacklist.contains(*ip) && !unblocked.contains(&ip))
-                .copied()
+            let message = DnsMessage::from_packet(&request.dns_response)?;
+            let blocked = message
+                .get_ips()
+                .filter(|ip| blacklist.contains(ip) && !unblocked.contains(ip))
                 .collect::<Vec<_>>();
             if !blocked.is_empty() {
-                match waiters.entry(blocked) {
-                    Entry::Occupied(mut waiters) => waiters.get_mut().push(request.reply),
+                info!("Unblocking {:?} from {:?}", blocked, message);
+                match waiting_responses.entry(blocked) {
+                    Entry::Occupied(mut waiters) => waiters.get_mut().push(request),
                     Entry::Vacant(v) => {
                         router_requests_tx
                             .send(RouterRequest::Add(v.key().clone()))
                             .expect("Receiver dropped");
-                        v.insert(vec![request.reply]);
+                        v.insert(vec![request]);
                     }
                 }
             } else {
-                let _ = request.reply.send(UnblockResponse::Skipped);
+                unblock_responses_tx
+                    .send(UnblockResponse::Completed(request))
+                    .expect("Receiver dropped");
             }
         }
         Message::Blacklist(new_blacklist) => {
@@ -115,13 +120,15 @@ fn handle_message(
 
         Message::RouterResponse(RouterResponse::Added(addrs)) => {
             unblocked.extend(addrs.iter().copied());
-            for waiter in waiters.remove(&addrs).into_iter().flatten() {
-                let _ = waiter.send(UnblockResponse::Unblocked(addrs.clone()));
+            for request in waiting_responses.remove(&addrs).into_iter().flatten() {
+                unblock_responses_tx
+                    .send(UnblockResponse::Completed(request))
+                    .expect("Receiver dropped")
             }
         }
 
         Message::RouterResponse(RouterResponse::AddError(addrs)) => {
-            waiters.remove(&addrs);
+            waiting_responses.remove(&addrs);
         }
         Message::RouterResponse(RouterResponse::Removed(addrs)) => {
             for ip in addrs {
@@ -147,28 +154,28 @@ enum RouterResponse {
 
 async fn router_handler(
     router_client: RouterClient,
-    mut requests_rx: UnboundedReceiver<RouterRequest>,
-    responses_tx: UnboundedSender<RouterResponse>,
+    mut requests: UnboundedReceiver<RouterRequest>,
+    responses: UnboundedSender<RouterResponse>,
 ) {
     loop {
-        let msg = requests_rx.recv().await.expect("Senders dropped");
+        let msg = requests.recv().await.expect("Senders dropped");
         let handle_message = async {
             match msg {
                 RouterRequest::Add(addrs) => {
                     if let Err(err) = router_client.add_routes(&addrs).await {
-                        responses_tx
+                        responses
                             .send(RouterResponse::AddError(addrs))
                             .expect("Receiver dropped");
                         return Err(err);
                     } else {
-                        responses_tx
+                        responses
                             .send(RouterResponse::Added(addrs))
                             .expect("Receiver dropped");
                     }
                 }
                 RouterRequest::Remove(addrs) => {
                     router_client.remove_routes(&addrs).await?;
-                    responses_tx
+                    responses
                         .send(RouterResponse::Removed(addrs))
                         .expect("Receiver dropped");
                 }
@@ -200,49 +207,53 @@ mod tests {
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::collections::{HashMap, HashSet};
-    use tokio::sync::{
-        mpsc::unbounded_channel,
-        oneshot::{self, error::TryRecvError},
-    };
+    use tokio::sync::mpsc::unbounded_channel;
+
+    static DNS_RESPONSE: &[u8] = include_bytes!("../test/dns_packets/a_www.google.com.bin");
 
     #[test]
     fn should_send_add_routes_when_ips_are_blocked() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let (reply, _) = oneshot::channel();
-        let mut blacklist = [ip].iter().copied().collect();
+        let (responses, _req) = unbounded_channel();
+        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
         let message = Message::UnblockRequest(UnblockRequest {
-            ips: vec![ip],
-            reply,
+            dns_response: Vec::from(DNS_RESPONSE),
+            sender: "127.0.0.1:1234".parse().unwrap(),
         });
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut HashSet::new(),
             &mut blacklist,
             &mut HashMap::new(),
         )?;
 
-        assert_eq!(router_rx.try_recv().unwrap(), RouterRequest::Add(vec![ip]));
+        assert_eq!(
+            router_rx.try_recv().unwrap(),
+            RouterRequest::Add(vec![blacklisted_ip])
+        );
         Ok(())
     }
 
     #[test]
     fn should_not_send_add_routes_when_ips_are_unblocked() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let (reply, _) = oneshot::channel();
-        let mut blacklist = [ip].iter().copied().collect();
-        let mut unblocked = [ip].iter().copied().collect();
+        let (responses, _req) = unbounded_channel();
+        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
+        let mut unblocked = [blacklisted_ip].iter().copied().collect();
         let message = Message::UnblockRequest(UnblockRequest {
-            ips: vec![ip],
-            reply,
+            dns_response: Vec::from(DNS_RESPONSE),
+            sender: "127.0.0.1:1234".parse().unwrap(),
         });
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut unblocked,
             &mut blacklist,
             &mut HashMap::new(),
@@ -255,18 +266,20 @@ mod tests {
     #[test]
     fn should_not_send_add_routes_when_ips_arent_in_blacklist() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let (reply, _) = oneshot::channel();
+        let (responses, _req) = unbounded_channel();
+        let blacklisted_ip = "65.233.162.103".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
         let message = Message::UnblockRequest(UnblockRequest {
-            ips: vec![ip],
-            reply,
+            dns_response: Vec::from(DNS_RESPONSE),
+            sender: "127.0.0.1:1234".parse().unwrap(),
         });
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut HashSet::new(),
-            &mut HashSet::new(),
+            &mut blacklist,
             &mut HashMap::new(),
         )?;
 
@@ -277,26 +290,28 @@ mod tests {
     #[test]
     fn should_not_send_add_routes_and_insert_waiter_when_there_is_pending_request() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let (reply, _) = oneshot::channel();
-        let mut blacklist = [ip].iter().copied().collect();
+        let (responses, _req) = unbounded_channel();
         let mut pending_requests = HashMap::new();
-        pending_requests.insert(vec![ip], vec![oneshot::channel().0]);
-        let message = Message::UnblockRequest(UnblockRequest {
-            ips: vec![ip],
-            reply,
-        });
+        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
+        let request = UnblockRequest {
+            dns_response: Vec::from(DNS_RESPONSE),
+            sender: "127.0.0.1:1234".parse().unwrap(),
+        };
+        let message = Message::UnblockRequest(request.clone());
+        pending_requests.insert(vec![blacklisted_ip], vec![request]);
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut HashSet::new(),
             &mut blacklist,
             &mut pending_requests,
         )?;
 
         assert!(router_rx.try_recv().is_err());
-        assert_eq!(pending_requests[[ip].as_ref()].len(), 2);
+        assert_eq!(pending_requests[[blacklisted_ip].as_ref()].len(), 2);
         Ok(())
     }
 
@@ -304,15 +319,17 @@ mod tests {
     fn should_send_remove_routes_when_new_blacklist_does_not_contains_previously_unblocked(
     ) -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let mut blacklist = [ip].iter().copied().collect();
-        let mut unblocked = [ip].iter().copied().collect();
+        let (responses, _req) = unbounded_channel();
+        let blacklisted_ip = "127.0.0.1".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
+        let mut unblocked = [blacklisted_ip].iter().copied().collect();
         let message =
             Message::Blacklist(["192.168.1.1".parse().unwrap()].iter().copied().collect());
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut unblocked,
             &mut blacklist,
             &mut HashMap::new(),
@@ -320,7 +337,7 @@ mod tests {
 
         assert_eq!(
             router_rx.try_recv().unwrap(),
-            RouterRequest::Remove(vec![ip])
+            RouterRequest::Remove(vec![blacklisted_ip])
         );
         Ok(())
     }
@@ -328,14 +345,16 @@ mod tests {
     #[test]
     fn should_not_send_remove_routes_when_new_blacklist_contains_all_previous_ips() -> Result<()> {
         let (router_tx, mut router_rx) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let mut blacklist: HashSet<_> = [ip].iter().copied().collect();
-        let mut unblocked = [ip].iter().copied().collect();
+        let (responses, _req) = unbounded_channel();
+        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+        let mut blacklist: HashSet<_> = [blacklisted_ip].iter().copied().collect();
+        let mut unblocked = [blacklisted_ip].iter().copied().collect();
         let message = Message::Blacklist(blacklist.clone());
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut unblocked,
             &mut blacklist,
             &mut HashMap::new(),
@@ -347,80 +366,89 @@ mod tests {
 
     #[test]
     fn should_update_unblocked_and_notify_waiters_when_routes_added() -> Result<()> {
-        let (router_tx, _) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let (reply1, mut reply1_rx) = oneshot::channel();
-        let (reply2, mut reply2_rx) = oneshot::channel();
-        let mut blacklist = [ip].iter().copied().collect();
+        let (router_tx, _req) = unbounded_channel();
+        let (responses, mut requests) = unbounded_channel();
         let mut pending_requests = HashMap::new();
+        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
+        let request = UnblockRequest {
+            dns_response: Vec::from(DNS_RESPONSE),
+            sender: "127.0.0.1:1234".parse().unwrap(),
+        };
         let mut unblocked = HashSet::new();
-        pending_requests.insert(vec![ip], vec![reply1, reply2]);
-        let message = Message::RouterResponse(RouterResponse::Added(vec![ip]));
+        pending_requests.insert(vec![blacklisted_ip], vec![request.clone(), request.clone()]);
+        let message = Message::RouterResponse(RouterResponse::Added(vec![blacklisted_ip]));
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut unblocked,
             &mut blacklist,
             &mut pending_requests,
         )?;
 
         assert_eq!(
-            reply1_rx.try_recv().unwrap(),
-            UnblockResponse::Unblocked(vec![ip])
+            requests.try_recv().unwrap(),
+            UnblockResponse::Completed(request.clone())
         );
         assert_eq!(
-            reply2_rx.try_recv().unwrap(),
-            UnblockResponse::Unblocked(vec![ip])
+            requests.try_recv().unwrap(),
+            UnblockResponse::Completed(request.clone())
         );
-        assert!(unblocked.contains(&ip));
+        assert!(unblocked.contains(&blacklisted_ip));
         Ok(())
     }
 
     #[test]
     fn should_remove_ip_from_unblocked_when_routes_removed() -> Result<()> {
-        let (router_tx, _) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let mut blacklist = [ip].iter().copied().collect();
+        let (router_tx, _req) = unbounded_channel();
+        let (responses, __req) = unbounded_channel();
+        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
+        let mut unblocked = [blacklisted_ip].iter().copied().collect();
         let mut pending_requests = HashMap::new();
-        let mut unblocked = [ip].iter().copied().collect();
-        let message = Message::RouterResponse(RouterResponse::Removed(vec![ip]));
+        let message = Message::RouterResponse(RouterResponse::Removed(vec![blacklisted_ip]));
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut unblocked,
             &mut blacklist,
             &mut pending_requests,
         )?;
 
-        assert!(!unblocked.contains(&ip));
+        assert!(!unblocked.contains(&blacklisted_ip));
         Ok(())
     }
 
     #[test]
-    fn should_drop_waiters_and_ignore_unblocked_when_routes_add_failed() -> Result<()> {
-        let (router_tx, _) = unbounded_channel();
-        let ip = "127.0.0.1".parse().unwrap();
-        let (reply1, mut reply1_rx) = oneshot::channel();
-        let (reply2, mut reply2_rx) = oneshot::channel();
-        let mut blacklist = [ip].iter().copied().collect();
+    fn should_remove_waiters_and_ignore_unblocked_when_routes_add_failed() -> Result<()> {
+        let (router_tx, _req) = unbounded_channel();
+        let (responses, __req) = unbounded_channel();
+        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+        let mut blacklist = [blacklisted_ip].iter().copied().collect();
+        let request = UnblockRequest {
+            dns_response: Vec::from(DNS_RESPONSE),
+            sender: "127.0.0.1:1234".parse().unwrap(),
+        };
         let mut pending_requests = HashMap::new();
         let mut unblocked = HashSet::new();
-        pending_requests.insert(vec![ip], vec![reply1, reply2]);
-        let message = Message::RouterResponse(RouterResponse::AddError(vec![ip]));
+        pending_requests.insert(vec![blacklisted_ip], vec![request.clone(), request]);
+        let message = Message::RouterResponse(RouterResponse::AddError(vec![blacklisted_ip]));
 
         handle_message(
             message,
             &router_tx,
+            &responses,
             &mut unblocked,
             &mut blacklist,
             &mut pending_requests,
         )?;
 
-        assert_eq!(reply1_rx.try_recv(), Err(TryRecvError::Closed));
-        assert_eq!(reply2_rx.try_recv(), Err(TryRecvError::Closed));
-        assert!(!unblocked.contains(&ip));
+        assert!(pending_requests.is_empty());
+        assert!(!unblocked.contains(&blacklisted_ip));
         Ok(())
     }
 }

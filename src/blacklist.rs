@@ -10,20 +10,20 @@ use tokio::{
     time::interval,
 };
 
-pub async fn create_blacklist_rx(
-    blacklist_tx: UnboundedSender<HashSet<Ipv4Addr>>,
+pub async fn create_blacklist_receiver(
+    blacklists: UnboundedSender<HashSet<Ipv4Addr>>,
     blacklist_url: Url,
     update_inverval: Duration,
 ) -> Result<impl Future<Output = ()>> {
     let http = Client::builder().gzip(true).build()?;
     let initial_blacklist = get_blacklist(&http, blacklist_url.clone()).await?;
-    blacklist_tx
+    blacklists
         .send(initial_blacklist.blacklist)
         .expect("Receiver dropped");
     let etag = initial_blacklist.etag;
 
-    Ok(blacklist_rx(
-        blacklist_tx,
+    Ok(blacklist_receiver(
+        blacklists,
         blacklist_url,
         update_inverval,
         http,
@@ -50,8 +50,8 @@ impl Versioned {
     }
 }
 
-async fn blacklist_rx(
-    blacklist_tx: UnboundedSender<HashSet<Ipv4Addr>>,
+async fn blacklist_receiver(
+    blacklists: UnboundedSender<HashSet<Ipv4Addr>>,
     blacklist_url: Url,
     update_inverval: Duration,
     http: Client,
@@ -72,7 +72,7 @@ async fn blacklist_rx(
 
             if let Some(new_blacklist) = maybe_new_blacklist {
                 etag = new_blacklist.etag;
-                blacklist_tx
+                blacklists
                     .send(new_blacklist.blacklist)
                     .expect("Receiver dropped");
             }

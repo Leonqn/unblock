@@ -12,16 +12,31 @@ pub struct Message<'a> {
     pub additional: Option<Vec<ResourceRecord<'a>>>,
 }
 
-impl Message<'_> {
+impl<'m> Message<'m> {
     pub fn from_packet<'a>(packet: &'a [u8]) -> Result<Message<'a>> {
         match parsers::parse_message(packet) {
             Ok((_, msg)) => Ok(msg),
             Err(err) => Err(anyhow!(
-                "got error while parsing packet. Err: {:#}, raw_packet: {:02X?}",
+                "got error while parsing dns message. Err: {:#}, raw_packet: {:02X?}",
                 err,
                 packet
             )),
         }
+    }
+
+    pub fn get_ips<'a>(&'a self) -> impl Iterator<Item = Ipv4Addr> + 'a {
+        self.answer
+            .iter()
+            .chain(&self.authority)
+            .chain(&self.additional)
+            .flatten()
+            .filter_map(|r| {
+                if let ResourceData::Ipv4(ip) = &r.data {
+                    Some(*ip)
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -44,6 +59,19 @@ pub struct Header {
     pub answer_resource_records: u16,
     pub authority_resource_records: u16,
     pub additional_resource_records: u16,
+}
+
+impl Header {
+    pub fn from_packet(packet: &[u8]) -> Result<Header> {
+        match parsers::parse_header(packet) {
+            Ok((_, header)) => Ok(header),
+            Err(err) => Err(anyhow!(
+                "got error while parsing dns header. Err: {:#}, raw_packet: {:02X?}",
+                err,
+                packet
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

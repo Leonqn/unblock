@@ -39,7 +39,7 @@ pub fn parse_message(packet: &[u8]) -> IResult<&[u8], Message> {
     Ok((rest, parsed))
 }
 
-fn parse_header(packet: &[u8]) -> IResult<&[u8], Header> {
+pub fn parse_header(packet: &[u8]) -> IResult<&[u8], Header> {
     let parse_header = tuple((be_u16, parse_flags, be_u16, be_u16, be_u16, be_u16));
     map(
         parse_header,
