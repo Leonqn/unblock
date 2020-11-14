@@ -1,8 +1,13 @@
 use anyhow::Result;
+use futures_util::stream::Stream;
 use log::error;
 use std::{collections::HashMap, future::Future, net::SocketAddr};
 use tokio::{
-    net::UdpSocket,
+    net::{
+        udp::{RecvHalf, SendHalf},
+        UdpSocket,
+    },
+    stream::StreamExt,
     sync::mpsc::{UnboundedReceiver, UnboundedSender},
 };
 
@@ -12,47 +17,61 @@ use self::message::{Header, MessageType};
 
 pub mod message;
 
+#[derive(Debug)]
+enum Message {
+    DnsPacket(Result<(Vec<u8>, SocketAddr), tokio::io::Error>),
+    UnblockResponse(UnblockResponse),
+}
+
 pub async fn create_server(
     bind_addr: SocketAddr,
     dns_upstream_addr: SocketAddr,
     unblock_requests: UnboundedSender<UnblockRequest>,
     unblock_responses: UnboundedReceiver<UnblockResponse>,
 ) -> Result<impl Future<Output = ()>> {
-    let socket = UdpSocket::bind(bind_addr).await?;
-    let send_socket = UdpSocket::bind("0.0.0.0:0".parse::<SocketAddr>().unwrap()).await?;
-    let messages_handler = messages_handler(socket, dns_upstream_addr, unblock_requests);
-    let unblock_responses_handler = unblock_responses_handler(send_socket, unblock_responses);
-    Ok(async {
-        tokio::join!(messages_handler, unblock_responses_handler);
-    })
+    let (recv, send) = UdpSocket::bind(bind_addr).await?.split();
+    let udp_stream = Box::pin(create_udp_dns_stream(recv));
+    let messages = udp_stream
+        .map(Message::DnsPacket)
+        .merge(unblock_responses.map(Message::UnblockResponse));
+    let messages_handler = messages_handler(messages, send, dns_upstream_addr, unblock_requests);
+    Ok(messages_handler)
 }
 
 async fn messages_handler(
-    mut socket: UdpSocket,
+    mut messages: impl Stream<Item = Message> + Unpin,
+    mut socket: SendHalf,
     dns_upstream_addr: SocketAddr,
     unblock_requests: UnboundedSender<UnblockRequest>,
 ) {
     let mut senders = HashMap::new();
-    let mut buf = [0; 512];
     loop {
         let handle_message = async {
-            let (bytes_read, sender) = socket.recv_from(&mut buf).await?;
-            let dns_packet = &buf[0..bytes_read];
-            let header = Header::from_packet(dns_packet)?;
-            match header.flags.message_type {
-                MessageType::Query => {
-                    senders.insert(header.id, sender);
-                    socket.send_to(dns_packet, &dns_upstream_addr).await?;
-                }
-                MessageType::Response => {
-                    if let Some(sender) = senders.remove(&header.id) {
-                        unblock_requests
-                            .send(UnblockRequest {
-                                dns_response: Vec::from(dns_packet),
-                                sender,
-                            })
-                            .expect("Receiver dropped");
+            match messages.next().await.expect("Must be infinite") {
+                Message::DnsPacket(dns_packet) => {
+                    let (dns_packet, sender) = dns_packet?;
+                    let header = Header::from_packet(&dns_packet)?;
+                    match header.flags.message_type {
+                        MessageType::Query => {
+                            senders.insert(header.id, sender);
+                            socket.send_to(&dns_packet, &dns_upstream_addr).await?;
+                        }
+                        MessageType::Response => {
+                            if let Some(sender) = senders.remove(&header.id) {
+                                unblock_requests
+                                    .send(UnblockRequest {
+                                        dns_response: dns_packet,
+                                        sender,
+                                    })
+                                    .expect("Receiver dropped");
+                            }
+                        }
                     }
+                }
+                Message::UnblockResponse(UnblockResponse::Completed(request)) => {
+                    socket
+                        .send_to(&request.dns_response, &request.sender)
+                        .await?;
                 }
             }
             Ok::<(), anyhow::Error>(())
@@ -64,22 +83,15 @@ async fn messages_handler(
     }
 }
 
-async fn unblock_responses_handler(
-    mut socket: UdpSocket,
-    mut unblock_responses: UnboundedReceiver<UnblockResponse>,
-) {
-    let message = unblock_responses.recv().await.expect("Sender dropped");
-    let handle_message = async {
-        match message {
-            UnblockResponse::Completed(request) => {
-                socket
-                    .send_to(&request.dns_response, &request.sender)
-                    .await?;
-            }
-        }
-        Ok::<_, anyhow::Error>(())
-    };
-    if let Err(e) = handle_message.await {
-        error!("Got error while sending dns response: {:#}", e);
-    }
+fn create_udp_dns_stream(
+    socket: RecvHalf,
+) -> impl Stream<Item = Result<(Vec<u8>, SocketAddr), tokio::io::Error>> {
+    let buf = vec![0; 512];
+    futures_util::stream::unfold((socket, buf), |(mut socket, mut buf)| async move {
+        let recv = async {
+            let (read, from) = socket.recv_from(&mut buf).await?;
+            Ok((Vec::from(&buf[0..read]), from))
+        };
+        Some((recv.await, (socket, buf)))
+    })
 }
