@@ -151,6 +151,7 @@ mod tests {
         cache.insert(4, 4, Instant::now() + Duration::from_secs(3));
 
         let removed = cache.remove_expired(2);
+
         assert_eq!(removed, 2);
     }
 }
