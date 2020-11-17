@@ -85,11 +85,16 @@ mod tests {
 
     use super::Cache;
 
+    fn future() -> Instant {
+        Instant::now() + Duration::from_secs(500)
+    }
+
+    fn past() -> Instant {
+        Instant::now() - Duration::from_secs(500)
+    }
+
     #[test]
     fn should_remove_expired() {
-        fn future() -> Instant {
-            Instant::now() + Duration::from_secs(500)
-        }
         let mut cache = Cache::new(future);
         cache.insert(1, 2, Instant::now());
 
@@ -101,9 +106,6 @@ mod tests {
 
     #[test]
     fn should_not_return_expired() {
-        fn future() -> Instant {
-            Instant::now() + Duration::from_secs(500)
-        }
         let mut cache = Cache::new(future);
         cache.insert(1, 2, Instant::now());
 
@@ -114,9 +116,6 @@ mod tests {
 
     #[test]
     fn should_return_not_expired() {
-        fn past() -> Instant {
-            Instant::now() - Duration::from_secs(500)
-        }
         let mut cache = Cache::new(past);
         cache.insert(1, 2, Instant::now());
 
@@ -127,9 +126,6 @@ mod tests {
 
     #[test]
     fn should_not_remove_not_expired() {
-        fn past() -> Instant {
-            Instant::now() - Duration::from_secs(500)
-        }
         let mut cache = Cache::new(past);
         cache.insert(1, 2, Instant::now());
 
@@ -141,9 +137,6 @@ mod tests {
 
     #[test]
     fn should_remove_not_greater_than_expected() {
-        fn future() -> Instant {
-            Instant::now() + Duration::from_secs(500)
-        }
         let mut cache = Cache::new(future);
         cache.insert(1, 2, Instant::now());
         cache.insert(2, 2, Instant::now() + Duration::from_secs(1));
