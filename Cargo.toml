@@ -18,6 +18,7 @@ futures-util = "0.3"
 bytes = "0.5"
 nom = "6"
 base64 = "0.13"
+priority-queue = "1"
 
 [dev-dependencies]
 pretty_assertions = "0.6"

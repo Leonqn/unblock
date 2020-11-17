@@ -8,6 +8,7 @@ mod blacklist;
 mod dns;
 mod router_client;
 mod unblock;
+mod cache;
 
 #[tokio::main]
 async fn main() -> Result<()> {

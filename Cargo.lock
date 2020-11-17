@@ -771,6 +771,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "priority-queue"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e51e18113edd707f361302ce1229da05854e786d78f03e1eddae3f1ffb8da663"
+dependencies = [
+ "autocfg",
+ "indexmap",
+]
+
+[[package]]
 name = "proc-macro-hack"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,6 +1246,7 @@ dependencies = [
  "log",
  "nom",
  "pretty_assertions",
+ "priority-queue",
  "reqwest",
  "serde",
  "serde_json",
