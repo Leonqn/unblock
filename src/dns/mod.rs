@@ -15,6 +15,7 @@ use crate::unblock::{UnblockRequest, UnblockResponse};
 
 use self::message::{Header, MessageType};
 
+pub mod client;
 pub mod message;
 
 #[derive(Debug)]

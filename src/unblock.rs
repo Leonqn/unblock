@@ -84,7 +84,7 @@ fn handle_message(
         Message::UnblockRequest(request) => {
             let message = DnsMessage::from_packet(&request.dns_response)?;
             let blocked = message
-                .get_ips()
+                .ips()
                 .filter(|ip| blacklist.contains(ip) && !unblocked.contains(ip))
                 .collect::<Vec<_>>();
             if !blocked.is_empty() {

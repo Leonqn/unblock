@@ -24,7 +24,7 @@ impl<'m> Message<'m> {
         }
     }
 
-    pub fn get_ips<'a>(&'a self) -> impl Iterator<Item = Ipv4Addr> + 'a {
+    pub fn ips<'a>(&'a self) -> impl Iterator<Item = Ipv4Addr> + 'a {
         self.answer
             .iter()
             .chain(&self.authority)
@@ -37,6 +37,15 @@ impl<'m> Message<'m> {
                     None
                 }
             })
+    }
+
+    pub fn ttl(&self) -> Option<Duration> {
+        self.answer
+            .iter()
+            .chain(&self.authority)
+            .flatten()
+            .map(|r| r.ttl)
+            .min()
     }
 }
 
