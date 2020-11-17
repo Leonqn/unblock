@@ -5,10 +5,10 @@ use log::info;
 use router_client::RouterClient;
 
 mod blacklist;
+mod cache;
 mod dns;
 mod router_client;
 mod unblock;
-mod cache;
 
 #[tokio::main]
 async fn main() -> Result<()> {

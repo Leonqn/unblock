@@ -1,33 +1,59 @@
-use std::{borrow::Borrow, cmp::Ordering, hash::Hash, time::Instant};
+use std::{borrow::Borrow, cmp::Ordering, fmt::Debug, hash::Hash, time::Duration, time::Instant};
 
 use priority_queue::PriorityQueue;
 
-#[derive(Debug)]
-struct Cache<K: Hash + Eq, V> {
-    cache: PriorityQueue<K, ExpiresAt<V>>,
-    get_time: fn() -> Instant,
+pub trait GetTime {
+    fn get_time(&self) -> Instant;
 }
 
-impl<K: Hash + Eq, V> Cache<K, V> {
-    pub fn new(get_time: fn() -> Instant) -> Self {
+#[derive(Debug)]
+pub struct CurrentTime;
+
+impl GetTime for CurrentTime {
+    fn get_time(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+#[derive(Debug)]
+pub struct Cache<K, V, GT>
+where
+    K: Hash + Eq,
+{
+    cache: PriorityQueue<K, ExpiresAt<V>>,
+    time: GT,
+}
+
+impl<K: Hash + Eq, V> Cache<K, V, CurrentTime> {
+    pub fn new() -> Self {
+        Self::with_get_time(CurrentTime)
+    }
+}
+
+impl<K, V, GT> Cache<K, V, GT>
+where
+    K: Hash + Eq,
+    GT: GetTime,
+{
+    pub fn with_get_time(time: GT) -> Self {
         Self {
             cache: PriorityQueue::new(),
-            get_time,
+            time,
         }
     }
 
-    pub fn insert(&mut self, k: K, v: V, expires_at: Instant) {
+    pub fn insert(&mut self, k: K, v: V, ttl: Duration) {
         self.cache.push(
             k,
             ExpiresAt {
-                expires_at,
+                expires_at: self.time.get_time() + ttl,
                 value: v,
             },
         );
     }
 
     pub fn remove_expired(&mut self, remove_count: usize) -> usize {
-        let current_time = (self.get_time)();
+        let current_time = self.time.get_time();
         let mut removed = 0;
         while self
             .cache
@@ -48,7 +74,7 @@ impl<K: Hash + Eq, V> Cache<K, V> {
     {
         self.cache
             .get(k)
-            .filter(|(_, v)| v.expires_at > (self.get_time)())
+            .filter(|(_, v)| v.expires_at > self.time.get_time())
             .map(|(_, v)| &v.value)
     }
 }
@@ -81,22 +107,47 @@ impl<T> PartialEq for ExpiresAt<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{Duration, Instant};
+    use std::{
+        cell::Cell,
+        rc::Rc,
+        time::{Duration, Instant},
+    };
 
-    use super::Cache;
+    use super::{Cache, GetTime};
 
-    fn future() -> Instant {
-        Instant::now() + Duration::from_secs(500)
+    #[derive(Clone)]
+    struct TimeMock {
+        time: Rc<Cell<Instant>>,
     }
 
-    fn past() -> Instant {
-        Instant::now() - Duration::from_secs(500)
+    impl TimeMock {
+        fn now() -> Self {
+            Self {
+                time: Rc::new(Cell::new(Instant::now())),
+            }
+        }
+
+        fn add(&self, d: Duration) {
+            self.replace(self.time.get() + d);
+        }
+
+        fn replace(&self, new_time: Instant) {
+            self.time.replace(new_time);
+        }
+    }
+
+    impl GetTime for TimeMock {
+        fn get_time(&self) -> Instant {
+            self.time.get()
+        }
     }
 
     #[test]
     fn should_remove_expired() {
-        let mut cache = Cache::new(future);
-        cache.insert(1, 2, Instant::now());
+        let time = TimeMock::now();
+        let mut cache = Cache::with_get_time(time.clone());
+        cache.insert(1, 2, Duration::from_secs(1));
+        time.add(Duration::from_secs(2));
 
         let removed = cache.remove_expired(5);
 
@@ -106,8 +157,10 @@ mod tests {
 
     #[test]
     fn should_not_return_expired() {
-        let mut cache = Cache::new(future);
-        cache.insert(1, 2, Instant::now());
+        let time = TimeMock::now();
+        let mut cache = Cache::with_get_time(time.clone());
+        cache.insert(1, 2, Duration::from_secs(1));
+        time.add(Duration::from_secs(2));
 
         let expired = cache.get(&1);
 
@@ -115,19 +168,21 @@ mod tests {
     }
 
     #[test]
-    fn should_return_not_expired() {
-        let mut cache = Cache::new(past);
-        cache.insert(1, 2, Instant::now());
+    fn should_return_actual() {
+        let time = TimeMock::now();
+        let mut cache = Cache::with_get_time(time.clone());
+        cache.insert(1, 2, Duration::from_secs(1));
 
-        let not_expired = cache.get(&1);
+        let actual = cache.get(&1);
 
-        assert_eq!(not_expired, Some(&2))
+        assert_eq!(actual, Some(&2))
     }
 
     #[test]
-    fn should_not_remove_not_expired() {
-        let mut cache = Cache::new(past);
-        cache.insert(1, 2, Instant::now());
+    fn should_not_remove_actual() {
+        let time = TimeMock::now();
+        let mut cache = Cache::with_get_time(time.clone());
+        cache.insert(1, 2, Duration::from_secs(1));
 
         let removed = cache.remove_expired(5);
 
@@ -136,15 +191,24 @@ mod tests {
     }
 
     #[test]
-    fn should_remove_not_greater_than_expected() {
-        let mut cache = Cache::new(future);
-        cache.insert(1, 2, Instant::now());
-        cache.insert(2, 2, Instant::now() + Duration::from_secs(1));
-        cache.insert(3, 2, Instant::now() + Duration::from_secs(2));
-        cache.insert(4, 4, Instant::now() + Duration::from_secs(3));
+    fn should_remove_only_specified_count() {
+        let time = TimeMock::now();
+        let now = time.get_time();
+        let mut cache = Cache::with_get_time(time.clone());
+        cache.insert(1, 2, Duration::from_secs(0));
+        cache.insert(2, 2, Duration::from_secs(1));
+        cache.insert(3, 2, Duration::from_secs(2));
+        cache.insert(4, 4, Duration::from_secs(3));
+        time.add(Duration::from_secs(4));
 
         let removed = cache.remove_expired(2);
 
         assert_eq!(removed, 2);
+        assert!(cache.get(&4).is_none());
+        time.replace(now);
+        assert_eq!(cache.get(&4), Some(&4));
+        assert_eq!(cache.get(&3), Some(&2));
+        assert!(cache.get(&1).is_none());
+        assert!(cache.get(&2).is_none());
     }
 }
