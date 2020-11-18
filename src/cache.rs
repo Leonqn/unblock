@@ -73,9 +73,9 @@ where
         Q: Hash + Eq,
     {
         self.cache
-            .get(k)
-            .filter(|(_, v)| v.expires_at > self.time.get_time())
-            .map(|(_, v)| &v.value)
+            .get_priority(k)
+            .filter(|v| v.expires_at > self.time.get_time())
+            .map(|v| &v.value)
     }
 }
 
