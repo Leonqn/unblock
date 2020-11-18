@@ -16,7 +16,7 @@ impl GetTime for CurrentTime {
 }
 
 #[derive(Debug)]
-pub struct Cache<K, V, GT>
+pub struct Cache<K, V, GT = CurrentTime>
 where
     K: Hash + Eq,
 {
