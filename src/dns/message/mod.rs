@@ -1,7 +1,72 @@
 use anyhow::{anyhow, Result};
+use bytes::Bytes;
 use std::{convert::TryFrom, net::Ipv4Addr, time::Duration};
 
 mod parsers;
+
+#[derive(Debug, Clone)]
+pub struct Query {
+    request: Bytes,
+    header: Header,
+}
+
+impl Query {
+    pub fn from_bytes(bytes: Bytes) -> Result<Self> {
+        let header = Header::from_packet(&bytes)?;
+        if matches!(header.flags.message_type, MessageType::Query) {
+            Ok(Self {
+                request: bytes,
+                header,
+            })
+        } else {
+            Err(anyhow!("Got dns response"))
+        }
+    }
+
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    pub fn parse(&self) -> Result<Message> {
+        Message::from_packet(&self.bytes())
+    }
+
+    pub fn bytes(&self) -> &Bytes {
+        &self.request
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Response {
+    response: Bytes,
+    header: Header,
+}
+
+impl Response {
+    pub fn from_bytes(bytes: Bytes) -> Result<Self> {
+        let header = Header::from_packet(&bytes)?;
+        if matches!(header.flags.message_type, MessageType::Response) {
+            Ok(Self {
+                response: bytes,
+                header,
+            })
+        } else {
+            Err(anyhow!("Got dns response"))
+        }
+    }
+
+    pub fn header(&self) -> &Header {
+        &self.header
+    }
+
+    pub fn parse(&self) -> Result<Message> {
+        Message::from_packet(&self.bytes())
+    }
+
+    pub fn bytes(&self) -> &Bytes {
+        &self.response
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Message<'a> {
@@ -13,7 +78,7 @@ pub struct Message<'a> {
 }
 
 impl<'m> Message<'m> {
-    pub fn from_packet<'a>(packet: &'a [u8]) -> Result<Message<'a>> {
+    fn from_packet<'a>(packet: &'a [u8]) -> Result<Message<'a>> {
         match parsers::parse_message(packet) {
             Ok((_, msg)) => Ok(msg),
             Err(err) => Err(anyhow!(

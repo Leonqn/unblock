@@ -3,7 +3,9 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use reqwest::{header::HeaderMap, header::HeaderValue, Client, Url};
 
-use super::{DnsClient, DnsRequest, DnsResponse};
+use crate::dns::message::{Query, Response};
+
+use super::DnsClient;
 
 pub struct DohClient {
     http_client: Client,
@@ -35,7 +37,7 @@ impl DohClient {
 
 #[async_trait]
 impl DnsClient for DohClient {
-    async fn send(&self, request: &DnsRequest) -> Result<DnsResponse> {
+    async fn send(&self, request: &Query) -> Result<Response> {
         let mut request_buf = BytesMut::from(request.bytes().as_ref());
         request_buf[0..2].copy_from_slice([0, 0].as_ref());
         let base_64_request = base64::encode_config(request_buf, base64::STANDARD_NO_PAD);
@@ -45,16 +47,13 @@ impl DnsClient for DohClient {
             .query(&[("dns", base_64_request)]);
         let response = request.send().await?;
         let response = response.bytes().await?;
-        DnsResponse::from_bytes(response)
+        Response::from_bytes(response)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::dns::{
-        client::{DnsClient, DnsRequest},
-        message::Message,
-    };
+    use crate::dns::client::{DnsClient, Query};
     use anyhow::Result;
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
@@ -63,14 +62,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_google_doh_request() -> Result<()> {
-        let request = DnsRequest::from_bytes(Bytes::from_static(include_bytes!(
+        let request = Query::from_bytes(Bytes::from_static(include_bytes!(
             "../../../test/dns_packets/q_api.browser.yandex.com.bin"
         )))?;
-        let request_message = Message::from_packet(&request.bytes())?;
+        let request_message = request.parse()?;
         let doh_client = DohClient::new("https://dns.google/dns-query".parse()?)?;
 
         let response = doh_client.send(&request).await?;
-        let message = Message::from_packet(&response.bytes())?;
+        let message = response.parse()?;
 
         assert_eq!(request_message.questions, message.questions);
         Ok(())

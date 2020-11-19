@@ -35,7 +35,7 @@ pub async fn create_unblocker(
     let (router_requests_tx, router_requests_rx) = tokio::sync::mpsc::unbounded_channel();
     let (router_responses_tx, router_responses_rx) = tokio::sync::mpsc::unbounded_channel();
     let messages = merge_rxs(requests, blacklists, router_responses_rx);
-    
+
     let router_handler = router_handler(router_client, router_requests_rx, router_responses_tx);
     let unblocker = unblocker(messages, router_requests_tx, responses, unblocked);
     Ok(async move {
@@ -82,7 +82,7 @@ fn handle_message(
 ) -> Result<()> {
     match message {
         Message::UnblockRequest(request) => {
-            let message = DnsMessage::from_packet(&request.dns_response)?;
+            let message: DnsMessage = todo!();
             let blocked = message
                 .ips()
                 .filter(|ip| blacklist.contains(ip) && !unblocked.contains(ip))

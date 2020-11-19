@@ -1,4 +1,5 @@
 use anyhow::Result;
+use bytes::Bytes;
 use futures_util::stream::Stream;
 use log::error;
 use std::{collections::HashMap, future::Future, net::SocketAddr};
@@ -17,6 +18,20 @@ use self::message::{Header, MessageType};
 
 pub mod client;
 pub mod message;
+pub mod server;
+
+fn create_udp_dns_stream(
+    socket: RecvHalf,
+) -> impl Stream<Item = Result<(SocketAddr, Bytes), tokio::io::Error>> {
+    let buf = vec![0; 512];
+    futures_util::stream::unfold((socket, buf), |(mut socket, mut buf)| async move {
+        let recv = async {
+            let (read, sender) = socket.recv_from(&mut buf).await?;
+            Ok((sender, Bytes::copy_from_slice(&buf[0..read])))
+        };
+        Some((recv.await, (socket, buf)))
+    })
+}
 
 #[derive(Debug)]
 enum Message {
@@ -33,6 +48,7 @@ pub async fn create_server(
     let (recv, send) = UdpSocket::bind(bind_addr).await?.split();
     let udp_stream = Box::pin(create_udp_dns_stream(recv));
     let messages = udp_stream
+        .map(|r| r.map(|(s, b)| (b.to_vec(), s)))
         .map(Message::DnsPacket)
         .merge(unblock_responses.map(Message::UnblockResponse));
     let messages_handler = messages_handler(messages, send, dns_upstream_addr, unblock_requests);
@@ -82,17 +98,4 @@ async fn messages_handler(
             error!("Got error while handling dns message: {:#}", e);
         }
     }
-}
-
-fn create_udp_dns_stream(
-    socket: RecvHalf,
-) -> impl Stream<Item = Result<(Vec<u8>, SocketAddr), tokio::io::Error>> {
-    let buf = vec![0; 512];
-    futures_util::stream::unfold((socket, buf), |(mut socket, mut buf)| async move {
-        let recv = async {
-            let (read, from) = socket.recv_from(&mut buf).await?;
-            Ok((Vec::from(&buf[0..read]), from))
-        };
-        Some((recv.await, (socket, buf)))
-    })
 }

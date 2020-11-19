@@ -1,6 +1,9 @@
-use crate::{cache::Cache, dns::message::Message};
+use crate::{
+    cache::Cache,
+    dns::message::{Query, Response},
+};
 
-use super::{DnsClient, DnsRequest, DnsResponse};
+use super::DnsClient;
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
@@ -22,17 +25,17 @@ where
         }
     }
 
-    async fn get_from_cache(&self, request: &DnsRequest) -> Option<DnsResponse> {
+    async fn get_from_cache(&self, request: &Query) -> Option<Response> {
         let cache = self.cache.read().await;
         let cached_response = cache.get(&request.bytes().slice(2..))?;
         let mut response = BytesMut::from(cached_response.as_ref());
         response[0..2].copy_from_slice(&request.bytes()[0..2]);
-        Some(DnsResponse::from_bytes(response.freeze()).expect("Must be valid response"))
+        Some(Response::from_bytes(response.freeze()).expect("Must be valid response"))
     }
 
-    async fn insert_to_cache(&self, request: &DnsRequest, response: &DnsResponse) -> Result<()> {
+    async fn insert_to_cache(&self, request: &Query, response: &Response) -> Result<()> {
         let mut cache = self.cache.write().await;
-        let ttl = Message::from_packet(response.bytes())?.min_ttl();
+        let ttl = response.parse()?.min_ttl();
         if let Some(ttl) = ttl {
             cache.insert(request.bytes().slice(2..), response.bytes().clone(), ttl);
             cache.remove_expired(3);
@@ -46,7 +49,7 @@ impl<C> DnsClient for CachedClient<C>
 where
     C: DnsClient,
 {
-    async fn send(&self, request: &DnsRequest) -> Result<DnsResponse> {
+    async fn send(&self, request: &Query) -> Result<Response> {
         match self.get_from_cache(&request).await {
             Some(response) => Ok(response),
             None => {
@@ -62,7 +65,10 @@ where
 mod tests {
     use std::sync::atomic::AtomicBool;
 
-    use crate::dns::client::{DnsClient, DnsRequest, DnsResponse};
+    use crate::dns::{
+        client::DnsClient,
+        message::{Query, Response},
+    };
     use anyhow::Result;
     use async_trait::async_trait;
     use bytes::Bytes;
@@ -75,17 +81,14 @@ mod tests {
 
     #[async_trait]
     impl DnsClient for DnsMock {
-        async fn send(
-            &self,
-            _request: &crate::dns::client::DnsRequest,
-        ) -> anyhow::Result<crate::dns::client::DnsResponse> {
+        async fn send(&self, _request: &Query) -> anyhow::Result<Response> {
             if self
                 .is_called
                 .fetch_and(true, std::sync::atomic::Ordering::Relaxed)
             {
                 panic!("Should not happen")
             } else {
-                DnsResponse::from_bytes(Bytes::from_static(include_bytes!(
+                Response::from_bytes(Bytes::from_static(include_bytes!(
                     "../../../test/dns_packets/a_api.browser.yandex.com.bin"
                 )))
             }
@@ -98,7 +101,7 @@ mod tests {
             is_called: AtomicBool::new(false),
         };
         let cached = CachedClient::new(dns_mock);
-        let request = DnsRequest::from_bytes(Bytes::from_static(include_bytes!(
+        let request = Query::from_bytes(Bytes::from_static(include_bytes!(
             "../../../test/dns_packets/q_api.browser.yandex.com.bin"
         )))?;
         cached.send(&request).await?;
@@ -117,7 +120,7 @@ mod tests {
         let mut request_bytes =
             include_bytes!("../../../test/dns_packets/q_api.browser.yandex.com.bin").to_owned();
         request_bytes[0] = 5;
-        let request = DnsRequest::from_bytes(Bytes::from(request_bytes.as_ref().to_owned()))?;
+        let request = Query::from_bytes(Bytes::from(request_bytes.as_ref().to_owned()))?;
         cached.send(&request).await?;
 
         let cached_response = cached.send(&request).await?;

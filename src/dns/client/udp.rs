@@ -3,10 +3,9 @@ use std::{collections::HashMap, net::SocketAddr};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures_util::stream::Stream;
 use log::error;
 use tokio::{
-    net::{udp::RecvHalf, UdpSocket},
+    net::UdpSocket,
     stream::StreamExt,
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -14,9 +13,12 @@ use tokio::{
     },
 };
 
-use crate::dns::message::Header;
+use crate::dns::{
+    create_udp_dns_stream,
+    message::{Header, Query, Response},
+};
 
-use super::{DnsClient, DnsRequest, DnsResponse};
+use super::DnsClient;
 
 pub struct UdpClient {
     responses: UnboundedSender<ResponseWaiter>,
@@ -35,7 +37,7 @@ impl UdpClient {
 
 #[async_trait]
 impl DnsClient for UdpClient {
-    async fn send(&self, request: &DnsRequest) -> Result<DnsResponse> {
+    async fn send(&self, request: &Query) -> Result<Response> {
         let (response_tx, response_rx) = oneshot::channel();
         self.responses
             .send(ResponseWaiter {
@@ -43,7 +45,7 @@ impl DnsClient for UdpClient {
                 waiter: response_tx,
             })
             .expect("Receiver dropped");
-        DnsResponse::from_bytes(response_rx.await.expect("Should always receive response")?)
+        Response::from_bytes(response_rx.await.expect("Should always receive response")?)
     }
 }
 
@@ -55,14 +57,18 @@ enum ClientMessage {
 
 #[derive(Debug)]
 struct ResponseWaiter {
-    request: DnsRequest,
+    request: Query,
     waiter: oneshot::Sender<Result<Bytes>>,
 }
 
 async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<ResponseWaiter>) {
     let (recv, mut send) = socket.split();
-    let mut msgs = Box::pin(create_udp_dns_stream(recv).map(ClientMessage::Response))
-        .merge(waiters.map(ClientMessage::Waiter));
+    let mut msgs = Box::pin(
+        create_udp_dns_stream(recv)
+            .map(|r| r.map(|(_, b)| b))
+            .map(ClientMessage::Response),
+    )
+    .merge(waiters.map(ClientMessage::Waiter));
     let mut waiters = HashMap::new();
     loop {
         let handle_response = async {
@@ -92,24 +98,10 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
     }
 }
 
-fn create_udp_dns_stream(socket: RecvHalf) -> impl Stream<Item = Result<Bytes, tokio::io::Error>> {
-    let buf = vec![0; 512];
-    futures_util::stream::unfold((socket, buf), |(mut socket, mut buf)| async move {
-        let recv = async {
-            let read = socket.recv(&mut buf).await?;
-            Ok(Bytes::copy_from_slice(&buf[0..read]))
-        };
-        Some((recv.await, (socket, buf)))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::UdpClient;
-    use crate::dns::{
-        client::{DnsClient, DnsRequest},
-        message::Message,
-    };
+    use crate::dns::{client::DnsClient, message::Query};
     use anyhow::Result;
     use bytes::Bytes;
     use pretty_assertions::assert_eq;
@@ -117,12 +109,13 @@ mod tests {
     #[tokio::test]
     async fn test_google_udp() -> Result<()> {
         let request = include_bytes!("../../../test/dns_packets/q_api.browser.yandex.com.bin");
-        let request_message = Message::from_packet(request.as_ref())?;
+        let request = Query::from_bytes(Bytes::from_static(request))?;
+        let request_message = request.parse()?;
         let addr = "8.8.8.8:53".parse().unwrap();
         let udp = UdpClient::new(addr).await?;
-        let request = DnsRequest::from_bytes(Bytes::from_static(request))?;
+
         let response = udp.send(&request).await?;
-        let response_message = Message::from_packet(&response.bytes())?;
+        let response_message = response.parse()?;
 
         assert_eq!(request_message.header.id, response_message.header.id);
         assert_eq!(request_message.questions, response_message.questions);
