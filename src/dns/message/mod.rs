@@ -39,7 +39,7 @@ impl<'m> Message<'m> {
             })
     }
 
-    pub fn ttl(&self) -> Option<Duration> {
+    pub fn min_ttl(&self) -> Option<Duration> {
         self.answer
             .iter()
             .chain(&self.authority)
