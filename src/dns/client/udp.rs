@@ -37,11 +37,11 @@ impl UdpClient {
 
 #[async_trait]
 impl DnsClient for UdpClient {
-    async fn send(&self, request: &Query) -> Result<Response> {
+    async fn send(&self, query: &Query) -> Result<Response> {
         let (response_tx, response_rx) = oneshot::channel();
         self.responses
             .send(ResponseWaiter {
-                request: request.clone(),
+                request: query.clone(),
                 waiter: response_tx,
             })
             .expect("Receiver dropped");

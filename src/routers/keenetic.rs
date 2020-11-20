@@ -4,13 +4,13 @@ use anyhow::{anyhow, Result};
 use reqwest::{Body, Client, Url};
 use serde::Deserialize;
 
-pub struct RouterClient {
+pub struct KeeneticClient {
     http: Client,
     base_url: Url,
     vpn_interface: String,
 }
 
-impl RouterClient {
+impl KeeneticClient {
     pub fn new(base_url: Url, vpn_interface: String) -> Self {
         Self {
             http: Client::new(),

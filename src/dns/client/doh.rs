@@ -37,8 +37,8 @@ impl DohClient {
 
 #[async_trait]
 impl DnsClient for DohClient {
-    async fn send(&self, request: &Query) -> Result<Response> {
-        let mut request_buf = BytesMut::from(request.bytes().as_ref());
+    async fn send(&self, query: &Query) -> Result<Response> {
+        let mut request_buf = BytesMut::from(query.bytes().as_ref());
         request_buf[0..2].copy_from_slice([0, 0].as_ref());
         let base_64_request = base64::encode_config(request_buf, base64::STANDARD_NO_PAD);
         let request = self

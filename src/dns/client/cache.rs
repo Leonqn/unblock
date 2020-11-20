@@ -25,19 +25,19 @@ where
         }
     }
 
-    async fn get_from_cache(&self, request: &Query) -> Option<Response> {
+    async fn get_from_cache(&self, query: &Query) -> Option<Response> {
         let cache = self.cache.read().await;
-        let cached_response = cache.get(&request.bytes().slice(2..))?;
+        let cached_response = cache.get(&query.bytes().slice(2..))?;
         let mut response = BytesMut::from(cached_response.as_ref());
-        response[0..2].copy_from_slice(&request.bytes()[0..2]);
+        response[0..2].copy_from_slice(&query.bytes()[0..2]);
         Some(Response::from_bytes(response.freeze()).expect("Must be valid response"))
     }
 
-    async fn insert_to_cache(&self, request: &Query, response: &Response) -> Result<()> {
+    async fn insert_to_cache(&self, query: &Query, response: &Response) -> Result<()> {
         let mut cache = self.cache.write().await;
         let ttl = response.parse()?.min_ttl();
         if let Some(ttl) = ttl {
-            cache.insert(request.bytes().slice(2..), response.bytes().clone(), ttl);
+            cache.insert(query.bytes().slice(2..), response.bytes().clone(), ttl);
             cache.remove_expired(3);
         }
         Ok(())
@@ -49,12 +49,12 @@ impl<C> DnsClient for CachedClient<C>
 where
     C: DnsClient,
 {
-    async fn send(&self, request: &Query) -> Result<Response> {
-        match self.get_from_cache(&request).await {
+    async fn send(&self, query: &Query) -> Result<Response> {
+        match self.get_from_cache(&query).await {
             Some(response) => Ok(response),
             None => {
-                let response = self.inner_client.send(&request).await?;
-                self.insert_to_cache(&request, &response).await?;
+                let response = self.inner_client.send(&query).await?;
+                self.insert_to_cache(&query, &response).await?;
                 Ok(response)
             }
         }

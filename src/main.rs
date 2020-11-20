@@ -1,13 +1,16 @@
-use std::{net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
+use dns::client::{CachedClient, UdpClient};
 use log::info;
-use router_client::RouterClient;
+use routers::RouterClient;
+use unblock::Unblocker;
 
 mod blacklist;
 mod cache;
 mod dns;
-mod router_client;
+mod dns_handler;
+mod routers;
 mod unblock;
 
 #[tokio::main]
@@ -22,38 +25,20 @@ async fn main() -> Result<()> {
         Duration::from_secs(std::env::var("UNBLOCK_BLACKLIST_UPDATE_INTERVAL_SEC")?.parse()?);
 
     let router_client = RouterClient::new(router_api, route_interface);
-    let (unblock_requests_tx, unblock_requests_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (unblock_responses_tx, unblock_responses_rx) = tokio::sync::mpsc::unbounded_channel();
-    let (blacklists_tx, blacklists_rx) = tokio::sync::mpsc::unbounded_channel();
-
+    let blacklists =
+        blacklist::create_blacklists_stream(blacklist_dump, blacklist_update_interval_s).await?;
+    let unblocker = Arc::new(Unblocker::new(blacklists, router_client).await?);
+    let dns_client = Arc::new(CachedClient::new(UdpClient::new(dns_upstream).await?));
     let dns_handle = tokio::spawn(
-        dns::create_server(
-            bind_addr,
-            dns_upstream,
-            unblock_requests_tx,
-            unblock_responses_rx,
-        )
-        .await?,
-    );
-    let blacklist_handle = tokio::spawn(
-        blacklist::create_blacklist_receiver(
-            blacklists_tx,
-            blacklist_dump,
-            blacklist_update_interval_s,
-        )
-        .await?,
-    );
-    let unblock_handle = tokio::spawn(
-        unblock::create_unblocker(
-            blacklists_rx,
-            unblock_requests_rx,
-            unblock_responses_tx,
-            router_client,
-        )
+        dns::server::create_udp_server(bind_addr, move |query| {
+            let unblocker = unblocker.clone();
+            let dns_client = dns_client.clone();
+            dns_handler::handle_query(query, unblocker, dns_client)
+        })
         .await?,
     );
 
     info!("Service spawned");
-    tokio::try_join!(dns_handle, blacklist_handle, unblock_handle)?;
+    dns_handle.await?;
     Ok(())
 }

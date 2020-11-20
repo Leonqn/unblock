@@ -1,34 +1,44 @@
-use std::{collections::HashSet, future::Future, net::IpAddr, net::Ipv4Addr, time::Duration};
+use std::{collections::HashSet, net::IpAddr, net::Ipv4Addr, time::Duration};
 
 use anyhow::{anyhow, Result};
-use futures_util::TryStreamExt;
-use log::error;
+use futures_util::{stream::Stream, TryStreamExt};
+use log::{error, info};
 use reqwest::{header::HeaderValue, Client, Response, StatusCode, Url};
 use tokio::{
     io::{stream_reader, AsyncBufReadExt, BufReader},
-    sync::mpsc::UnboundedSender,
-    time::interval,
+    stream::StreamExt,
+    time::delay_for,
 };
 
-pub async fn create_blacklist_receiver(
-    blacklists: UnboundedSender<HashSet<Ipv4Addr>>,
+pub async fn create_blacklists_stream(
     blacklist_url: Url,
     update_inverval: Duration,
-) -> Result<impl Future<Output = ()>> {
+) -> Result<impl Stream<Item = HashSet<Ipv4Addr>>> {
     let http = Client::builder().gzip(true).build()?;
     let initial_blacklist = get_blacklist(&http, blacklist_url.clone()).await?;
-    blacklists
-        .send(initial_blacklist.blacklist)
-        .expect("Receiver dropped");
-    let etag = initial_blacklist.etag;
 
-    Ok(blacklist_receiver(
-        blacklists,
-        blacklist_url,
-        update_inverval,
-        http,
-        etag,
-    ))
+    let blacklists = futures_util::stream::unfold(
+        (http, initial_blacklist.etag, blacklist_url),
+        move |(http, etag, url)| async move {
+            loop {
+                delay_for(update_inverval).await;
+                match update_blacklist(&http, url.clone(), etag.clone()).await {
+                    Ok(Some(blacklist)) => {
+                        info!(
+                            "Received new blacklist with {} items",
+                            blacklist.blacklist.len()
+                        );
+                        return Some((blacklist.blacklist, (http, blacklist.etag, url)));
+                    }
+                    Err(err) => {
+                        error!("Got error while updating blacklist {:#}", err);
+                    }
+                    _ => {}
+                }
+            }
+        },
+    );
+    Ok(tokio::stream::once(initial_blacklist.blacklist).chain(blacklists))
 }
 
 struct Versioned {
@@ -50,38 +60,14 @@ impl Versioned {
     }
 }
 
-async fn blacklist_receiver(
-    blacklists: UnboundedSender<HashSet<Ipv4Addr>>,
-    blacklist_url: Url,
-    update_inverval: Duration,
-    http: Client,
-    mut etag: Option<HeaderValue>,
-) {
-    let mut interval = interval(update_inverval);
-    interval.tick().await;
-
-    loop {
-        interval.tick().await;
-        let receive_blacklist = async {
-            let maybe_new_blacklist = match &etag {
-                Some(etag) => {
-                    try_get_new_blacklist(&http, blacklist_url.clone(), etag.clone()).await?
-                }
-                None => Some(get_blacklist(&http, blacklist_url.clone()).await?),
-            };
-
-            if let Some(new_blacklist) = maybe_new_blacklist {
-                etag = new_blacklist.etag;
-                blacklists
-                    .send(new_blacklist.blacklist)
-                    .expect("Receiver dropped");
-            }
-            Ok::<_, anyhow::Error>(())
-        };
-
-        if let Err(e) = receive_blacklist.await {
-            error!("Got error while handling dns message: {:#}", e);
-        }
+async fn update_blacklist(
+    http: &Client,
+    url: Url,
+    etag: Option<HeaderValue>,
+) -> Result<Option<Versioned>> {
+    match etag {
+        Some(etag) => try_get_new_blacklist(&http, url, etag).await,
+        None => Ok(Some(get_blacklist(&http, url).await?)),
     }
 }
 
@@ -137,10 +123,9 @@ async fn parse_csv_dump<ABR: AsyncBufReadExt + Unpin>(
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
-
     use super::parse_csv_dump;
     use anyhow::Result;
+    use std::io::Cursor;
 
     #[tokio::test]
     async fn csv_parse_test() -> Result<()> {

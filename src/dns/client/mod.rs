@@ -14,5 +14,5 @@ use super::message::{Query, Response};
 
 #[async_trait]
 pub trait DnsClient: Send + Sync {
-    async fn send(&self, request: &Query) -> Result<Response>;
+    async fn send(&self, query: &Query) -> Result<Response>;
 }

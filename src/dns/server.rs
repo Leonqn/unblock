@@ -4,10 +4,8 @@ use std::{future::Future, net::SocketAddr};
 use tokio::{
     net::{udp::SendHalf, UdpSocket},
     stream::StreamExt,
-    sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    sync::mpsc::{unbounded_channel, UnboundedReceiver},
 };
-
-use bytes::Bytes;
 
 use super::{
     create_udp_dns_stream,
@@ -27,21 +25,24 @@ where
     let mut requests = Box::pin(create_udp_dns_stream(recv));
 
     let requests_receiver = async move {
-        let request = requests.next().await.expect("Should be infinite");
-        let handler = async {
-            let (sender, request) = request?;
-            let query = Query::from_bytes(request)?;
-            let handler_fut = request_handler(query);
-            tokio::spawn(async move {
-                let response = handler_fut.await;
-                responses_tx
-                    .send((sender, response))
-                    .expect("Receiver dropped");
-            });
-            Ok::<_, anyhow::Error>(())
-        };
-        if let Err(err) = handler.await {
-            error!("Error occured while receiving dns request: {:#}", err)
+        loop {
+            let request = requests.next().await.expect("Should be infinite");
+            let handler = async {
+                let (sender, request) = request?;
+                let responses_tx = responses_tx.clone();
+                let query = Query::from_bytes(request)?;
+                let handler_fut = request_handler(query);
+                tokio::spawn(async move {
+                    let response = handler_fut.await;
+                    responses_tx
+                        .send((sender, response))
+                        .expect("Receiver dropped");
+                });
+                Ok::<_, anyhow::Error>(())
+            };
+            if let Err(err) = handler.await {
+                error!("Error occured while receiving dns request: {:#}", err)
+            }
         }
     };
 
