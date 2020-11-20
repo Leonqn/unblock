@@ -49,11 +49,11 @@ impl<C> DnsClient for CachedClient<C>
 where
     C: DnsClient,
 {
-    async fn send(&self, query: &Query) -> Result<Response> {
+    async fn send(&self, query: Query) -> Result<Response> {
         match self.get_from_cache(&query).await {
             Some(response) => Ok(response),
             None => {
-                let response = self.inner_client.send(&query).await?;
+                let response = self.inner_client.send(query.clone()).await?;
                 self.insert_to_cache(&query, &response).await?;
                 Ok(response)
             }
@@ -81,7 +81,7 @@ mod tests {
 
     #[async_trait]
     impl DnsClient for DnsMock {
-        async fn send(&self, _request: &Query) -> anyhow::Result<Response> {
+        async fn send(&self, _request: Query) -> anyhow::Result<Response> {
             if self
                 .is_called
                 .fetch_and(true, std::sync::atomic::Ordering::Relaxed)
@@ -104,9 +104,9 @@ mod tests {
         let request = Query::from_bytes(Bytes::from_static(include_bytes!(
             "../../../test/dns_packets/q_api.browser.yandex.com.bin"
         )))?;
-        cached.send(&request).await?;
+        cached.send(request.clone()).await?;
 
-        let _cached_response = cached.send(&request).await?;
+        let _cached_response = cached.send(request).await?;
 
         Ok(())
     }
@@ -121,9 +121,9 @@ mod tests {
             include_bytes!("../../../test/dns_packets/q_api.browser.yandex.com.bin").to_owned();
         request_bytes[0] = 5;
         let request = Query::from_bytes(Bytes::from(request_bytes.as_ref().to_owned()))?;
-        cached.send(&request).await?;
+        cached.send(request.clone()).await?;
 
-        let cached_response = cached.send(&request).await?;
+        let cached_response = cached.send(request).await?;
 
         assert_eq!(&cached_response.bytes().slice(0..2), &request_bytes[0..2]);
         Ok(())

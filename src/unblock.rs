@@ -4,7 +4,8 @@ use std::{
     net::Ipv4Addr,
 };
 
-use crate::routers::RouterClient;
+use crate::routers::KeeneticClient;
+
 use anyhow::{anyhow, Result};
 use log::{error, info};
 use tokio::{
@@ -35,7 +36,7 @@ pub struct Unblocker {
 impl Unblocker {
     pub async fn new(
         blacklists: impl Stream<Item = HashSet<Ipv4Addr>> + Send + 'static,
-        router_client: RouterClient,
+        router_client: KeeneticClient,
     ) -> Result<Self> {
         let unblocked = router_client.get_routed().await?;
         let (messages_tx, messages_rx) = unbounded_channel();
@@ -175,7 +176,7 @@ enum RouterResponse {
 }
 
 async fn router_handler(
-    router_client: RouterClient,
+    router_client: KeeneticClient,
     mut requests: UnboundedReceiver<RouterRequest>,
     responses: UnboundedSender<UnblockerMessage>,
 ) {

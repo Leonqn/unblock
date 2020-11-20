@@ -37,7 +37,7 @@ impl DohClient {
 
 #[async_trait]
 impl DnsClient for DohClient {
-    async fn send(&self, query: &Query) -> Result<Response> {
+    async fn send(&self, query: Query) -> Result<Response> {
         let mut request_buf = BytesMut::from(query.bytes().as_ref());
         request_buf[0..2].copy_from_slice([0, 0].as_ref());
         let base_64_request = base64::encode_config(request_buf, base64::STANDARD_NO_PAD);
@@ -68,7 +68,7 @@ mod tests {
         let request_message = request.parse()?;
         let doh_client = DohClient::new("https://dns.google/dns-query".parse()?)?;
 
-        let response = doh_client.send(&request).await?;
+        let response = doh_client.send(request.clone()).await?;
         let message = response.parse()?;
 
         assert_eq!(request_message.questions, message.questions);

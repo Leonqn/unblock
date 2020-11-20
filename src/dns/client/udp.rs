@@ -37,11 +37,11 @@ impl UdpClient {
 
 #[async_trait]
 impl DnsClient for UdpClient {
-    async fn send(&self, query: &Query) -> Result<Response> {
+    async fn send(&self, query: Query) -> Result<Response> {
         let (response_tx, response_rx) = oneshot::channel();
         self.responses
             .send(ResponseWaiter {
-                request: query.clone(),
+                request: query,
                 waiter: response_tx,
             })
             .expect("Receiver dropped");
@@ -114,7 +114,7 @@ mod tests {
         let addr = "8.8.8.8:53".parse().unwrap();
         let udp = UdpClient::new(addr).await?;
 
-        let response = udp.send(&request).await?;
+        let response = udp.send(request.clone()).await?;
         let response_message = response.parse()?;
 
         assert_eq!(request_message.header.id, response_message.header.id);

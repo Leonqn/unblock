@@ -3,7 +3,7 @@ use std::{net::SocketAddr, sync::Arc, time::Duration};
 use anyhow::Result;
 use dns::client::{CachedClient, UdpClient};
 use log::info;
-use routers::RouterClient;
+use routers::KeeneticClient;
 use unblock::Unblocker;
 
 mod blacklist;
@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     let blacklist_update_interval_s =
         Duration::from_secs(std::env::var("UNBLOCK_BLACKLIST_UPDATE_INTERVAL_SEC")?.parse()?);
 
-    let router_client = RouterClient::new(router_api, route_interface);
+    let router_client = KeeneticClient::new(router_api, route_interface);
     let blacklists =
         blacklist::create_blacklists_stream(blacklist_dump, blacklist_update_interval_s).await?;
     let unblocker = Arc::new(Unblocker::new(blacklists, router_client).await?);
