@@ -49,7 +49,6 @@ where
     let server = async {
         let responses_sender = responses_sender(send, responses_rx);
         tokio::join!(requests_receiver, responses_sender);
-        ()
     };
 
     Ok(server)
