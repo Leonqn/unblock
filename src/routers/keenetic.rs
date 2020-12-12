@@ -1,8 +1,11 @@
 use std::{collections::HashSet, net::Ipv4Addr};
 
 use anyhow::{anyhow, Result};
+use async_trait::async_trait;
 use reqwest::{Body, Client, Url};
 use serde::Deserialize;
+
+use super::RouterClient;
 
 pub struct KeeneticClient {
     http: Client,
@@ -17,36 +20,6 @@ impl KeeneticClient {
             base_url,
             vpn_interface,
         }
-    }
-
-    pub async fn get_routed(&self) -> Result<HashSet<Ipv4Addr>> {
-        let response = self
-            .http
-            .get(self.base_url.join("/rci/ip/route")?)
-            .send()
-            .await?
-            .bytes()
-            .await?;
-        let routes: Routes = serde_json::from_slice(&response)?;
-        Ok(routes
-            .routes()
-            .into_iter()
-            .flatten()
-            .filter(|r| r.interface == self.vpn_interface)
-            .map(|r| r.host)
-            .collect())
-    }
-
-    pub async fn add_routes(&self, addrs: &[Ipv4Addr]) -> Result<()> {
-        let add_addrs_tasks = addrs.iter().map(|addr| self.add_route(*addr));
-        futures_util::future::try_join_all(add_addrs_tasks).await?;
-        Ok(())
-    }
-
-    pub async fn remove_routes(&self, addrs: &[Ipv4Addr]) -> Result<()> {
-        let romove_addrs_tasks = addrs.iter().map(|addr| self.remove_route(*addr));
-        futures_util::future::try_join_all(romove_addrs_tasks).await?;
-        Ok(())
     }
 
     async fn remove_route(&self, addr: Ipv4Addr) -> Result<()> {
@@ -82,6 +55,38 @@ impl KeeneticClient {
                 response.text().await?
             ))
         }
+    }
+}
+#[async_trait]
+impl RouterClient for KeeneticClient {
+    async fn get_routed(&self) -> Result<HashSet<Ipv4Addr>> {
+        let response = self
+            .http
+            .get(self.base_url.join("/rci/ip/route")?)
+            .send()
+            .await?
+            .bytes()
+            .await?;
+        let routes: Routes = serde_json::from_slice(&response)?;
+        Ok(routes
+            .routes()
+            .into_iter()
+            .flatten()
+            .filter(|r| r.interface == self.vpn_interface)
+            .map(|r| r.host)
+            .collect())
+    }
+
+    async fn add_routes(&self, addrs: &[Ipv4Addr]) -> Result<()> {
+        let add_addrs_tasks = addrs.iter().map(|addr| self.add_route(*addr));
+        futures_util::future::try_join_all(add_addrs_tasks).await?;
+        Ok(())
+    }
+
+    async fn remove_routes(&self, addrs: &[Ipv4Addr]) -> Result<()> {
+        let romove_addrs_tasks = addrs.iter().map(|addr| self.remove_route(*addr));
+        futures_util::future::try_join_all(romove_addrs_tasks).await?;
+        Ok(())
     }
 }
 
