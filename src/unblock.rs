@@ -30,7 +30,7 @@ pub struct Unblocker {
 impl Unblocker {
     pub async fn new(
         blacklists: impl Stream<Item = HashSet<Ipv4Addr>> + Send + 'static,
-        router_client: impl RouterClient + Send + Sync + 'static,
+        router_client: impl RouterClient,
     ) -> Result<Self> {
         let unblocked = router_client.get_routed().await?;
         let (messages_tx, messages_rx) = unbounded_channel();

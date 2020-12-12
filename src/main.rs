@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use dns::client::{CachedClient, ChoiceClient, DnsClient, DohClient, UdpClient};
+use dns::client::{CachedClient, ChoiceClient, DnsClient, DohClient, RoundRobinClient, UdpClient};
 use log::info;
 use reqwest::Url;
 use routers::KeeneticClient;
@@ -25,7 +25,7 @@ mod unblock;
 struct Config {
     bind_addr: SocketAddr,
     dns_upstream: SocketAddr,
-    doh_upstream: String,
+    doh_upstreams: Vec<String>,
     blacklist_dump_uri: String,
     #[serde(with = "serde_humantime")]
     blacklist_update_interval: Duration,
@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
     settings.merge(config::File::with_name(&config_name))?;
     let config = settings.try_into::<Config>()?;
     let (cancel_tx, cancel_rx) = oneshot::channel();
-    let dns_client = Arc::new(create_dns_client(config.doh_upstream, config.dns_upstream).await?);
+    let dns_client = Arc::new(create_dns_client(config.doh_upstreams, config.dns_upstream).await?);
     let bootstrap_server = tokio::spawn(create_bootstrap_server(
         config.bind_addr,
         dns_client.clone(),
@@ -80,30 +80,33 @@ async fn main() -> Result<()> {
 }
 
 async fn create_dns_client(
-    doh_upstream: String,
+    doh_upstreams: Vec<String>,
     udp_upstream: SocketAddr,
-) -> Result<impl DnsClient + Send + Sync + 'static> {
+) -> Result<impl DnsClient> {
     let udp_client = UdpClient::new(udp_upstream).await?;
-    let doh_upstream: Url = doh_upstream.parse()?;
-    let doh_domains = {
-        let mut h = HashSet::new();
-        h.insert(
-            doh_upstream
-                .domain()
-                .expect("Should have domain")
-                .to_owned(),
-        );
-        h
-    };
-    let doh_client = DohClient::new(doh_upstream)?;
-    let choose_client = ChoiceClient::new(udp_client, doh_client, doh_domains);
+    let doh_upstreams = doh_upstreams
+        .iter()
+        .map(|x| Ok(x.parse()?))
+        .collect::<Result<Vec<Url>>>()?;
+    let doh_domains = doh_upstreams
+        .iter()
+        .map(|x| Some(x.domain()?.to_owned()))
+        .collect::<Option<HashSet<_>>>()
+        .expect("Should have domains");
+    let doh_clients = doh_upstreams
+        .into_iter()
+        .map(DohClient::new)
+        .map(|c| Ok(Box::new(c?) as Box<dyn DnsClient>))
+        .collect::<Result<_>>()?;
+    let round_robin_doh = RoundRobinClient::new(doh_clients);
+    let choose_client = ChoiceClient::new(udp_client, round_robin_doh, doh_domains);
     let cached_client = CachedClient::new(choose_client);
     Ok(cached_client)
 }
 
 async fn create_bootstrap_server(
     bind_addr: SocketAddr,
-    client: Arc<impl DnsClient + Send + Sync + 'static>,
+    client: Arc<impl DnsClient>,
     cancel: oneshot::Receiver<()>,
 ) -> Result<()> {
     let (_, cancel) = tokio::join!(

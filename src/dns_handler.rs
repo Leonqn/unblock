@@ -12,7 +12,7 @@ use crate::{
 pub async fn handle_query(
     query: Query,
     unblocker: Arc<Unblocker>,
-    dns_client: Arc<impl DnsClient + Send + Sync + 'static>,
+    dns_client: Arc<impl DnsClient>,
 ) -> Result<Response> {
     let dns_response = dns_client.send(query).await?;
     let parsed_response = dns_response.parse()?;
