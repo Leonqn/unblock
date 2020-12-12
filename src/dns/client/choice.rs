@@ -6,13 +6,13 @@ use crate::dns::message::{Query, Response};
 use super::DnsClient;
 use async_trait::async_trait;
 
-pub struct ChooseClient<C1, C2> {
+pub struct ChoiceClient<C1, C2> {
     first: C1,
     second: C2,
     through_first_domains: HashSet<String>,
 }
 
-impl<C1, C2> ChooseClient<C1, C2>
+impl<C1, C2> ChoiceClient<C1, C2>
 where
     C1: DnsClient,
     C2: DnsClient,
@@ -27,7 +27,7 @@ where
 }
 
 #[async_trait]
-impl<C1, C2> DnsClient for ChooseClient<C1, C2>
+impl<C1, C2> DnsClient for ChoiceClient<C1, C2>
 where
     C1: DnsClient,
     C2: DnsClient,

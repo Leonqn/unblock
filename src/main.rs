@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use dns::client::{CachedClient, ChooseClient, DnsClient, DohClient, UdpClient};
+use dns::client::{CachedClient, ChoiceClient, DnsClient, DohClient, UdpClient};
 use log::info;
 use reqwest::Url;
 use routers::KeeneticClient;
@@ -96,7 +96,7 @@ async fn create_dns_client(
         h
     };
     let doh_client = DohClient::new(doh_upstream)?;
-    let choose_client = ChooseClient::new(udp_client, doh_client, doh_domains);
+    let choose_client = ChoiceClient::new(udp_client, doh_client, doh_domains);
     let cached_client = CachedClient::new(choose_client);
     Ok(cached_client)
 }
