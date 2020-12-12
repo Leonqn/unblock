@@ -27,6 +27,7 @@ impl Query {
         &self.header
     }
 
+    #[allow(dead_code)]
     pub fn parse(&self) -> Result<Message> {
         Message::from_packet(&self.bytes())
     }
@@ -55,6 +56,7 @@ impl Response {
         }
     }
 
+    #[allow(dead_code)]
     pub fn header(&self) -> &Header {
         &self.header
     }
