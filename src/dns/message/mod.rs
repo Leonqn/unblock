@@ -106,6 +106,10 @@ impl<'m> Message<'m> {
             })
     }
 
+    pub fn domains<'a>(&'a self) -> impl Iterator<Item = &'a [&'a str]> + 'a {
+        self.questions.iter().flatten().map(|q| q.name.as_slice())
+    }
+
     pub fn min_ttl(&self) -> Option<Duration> {
         self.answer
             .iter()

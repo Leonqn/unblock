@@ -1,6 +1,5 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use bytes::BytesMut;
 use reqwest::{header::HeaderMap, header::HeaderValue, Client, Url};
 
 use crate::dns::message::{Query, Response};
@@ -39,15 +38,14 @@ impl DohClient {
 #[async_trait]
 impl DnsClient for DohClient {
     async fn send(&self, query: Query) -> Result<Response> {
-        let mut request_buf = BytesMut::from(query.bytes().as_ref());
-        request_buf[0..2].copy_from_slice([0, 0].as_ref());
-        let base_64_request = base64::encode_config(request_buf, base64::STANDARD_NO_PAD);
-        let request = self
+        let response = self
             .http_client
-            .get(self.server_url.clone())
-            .query(&[("dns", base_64_request)]);
-        let response = request.send().await?;
-        let response = response.bytes().await?;
+            .post(self.server_url.clone())
+            .body(query.bytes().clone())
+            .send()
+            .await?
+            .bytes()
+            .await?;
         Response::from_bytes(response)
     }
 }

@@ -3,10 +3,12 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 mod cache;
+mod choose;
 mod doh;
 mod udp;
 
 pub use cache::*;
+pub use choose::*;
 pub use doh::*;
 pub use udp::*;
 

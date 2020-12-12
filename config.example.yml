@@ -1,5 +1,6 @@
 bind_addr: 0.0.0.0:53 # ip-port для dns сервера
 dns_upstream: 8.8.8.8:53 # ip-port dns upstream сервера
+doh_upstream: https://dns.google/dns-query # upstream doh сервера
 blacklist_dump_uri: https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv # ссылка на дамп
 blacklist_update_interval: 5 minutes # интервал обновления дампа
 router_api_uri: http://192.168.1.1:79 # ссылка на апи роутера без аутентификации
