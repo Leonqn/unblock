@@ -1800,6 +1800,7 @@ checksum = "373c8a200f9e67a0c95e62a4f52fbf80c23b4381c05a17845531982fa99e6b33"
 name = "unblock"
 version = "0.1.0"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "async-trait",
  "bytes",
@@ -1810,6 +1811,7 @@ dependencies = [
  "nom 6.0.0",
  "pretty_assertions",
  "priority-queue",
+ "regex",
  "reqwest",
  "serde 1.0.116",
  "serde-humantime",

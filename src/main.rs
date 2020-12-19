@@ -20,6 +20,7 @@ mod dns;
 mod dns_handler;
 mod routers;
 mod unblock;
+pub mod ads;
 
 #[derive(Deserialize)]
 struct Config {
