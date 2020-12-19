@@ -43,6 +43,7 @@ impl DomainsFilter {
     }
 }
 
+#[derive(Debug)]
 struct RulesMatcher {
     rules_substr: AhoCorasick,
     rules: Vec<Rule>,
@@ -90,22 +91,22 @@ struct Rule {
 
 impl Rule {
     fn new(rule: &str) -> Result<Self> {
-        if rule.starts_with("@@") {
+        if let Some(stripped) = rule.strip_prefix("@@") {
             Ok(Self {
-                regex: Regex::new(&Self::to_regex_string(&rule[2..]))?,
+                regex: Regex::new(&Self::create_regex_string(&stripped))?,
                 original_rule: rule.to_owned(),
                 is_allow_rule: true,
             })
         } else {
             Ok(Self {
-                regex: Regex::new(&Self::to_regex_string(&rule))?,
+                regex: Regex::new(&Self::create_regex_string(&rule))?,
                 original_rule: rule.to_owned(),
                 is_allow_rule: false,
             })
         }
     }
 
-    fn to_regex_string(rule: &str) -> String {
+    fn create_regex_string(rule: &str) -> String {
         if rule.starts_with('/') && rule.ends_with('/') {
             rule.trim_matches('/').replace(r"\/", r"/")
         } else {
@@ -113,13 +114,14 @@ impl Rule {
                 .replace(r"\*", ".*")
                 .replace(r"\^", "$")
                 .replace("://", "");
-            if regex.starts_with(r"\|\|") {
-                regex = String::from(r"([\w\d\-_\.]+\.)?") + &regex[4..];
-            } else if regex.starts_with(r"\|") {
-                regex = String::from("^") + &regex[2..];
+
+            if let Some(stripped) = regex.strip_prefix(r"\|\|") {
+                regex = String::from(r"([\w\d\-_\.]+\.)?") + stripped;
+            } else if let Some(stripped) = regex.strip_prefix(r"\|") {
+                regex = String::from("^") + stripped;
             }
-            if regex.ends_with(r"\|") {
-                regex = String::from(&regex[..regex.len() - 2]) + "$";
+            if let Some(stripped) = regex.strip_suffix(r"\|") {
+                regex = String::from(stripped) + "$";
             }
             regex
         }
