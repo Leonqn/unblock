@@ -1,11 +1,38 @@
+use std::time::Duration;
+
+use crate::files_stream::create_files_stream;
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
+use futures_util::stream::Stream;
+use log::error;
 use regex::Regex;
+use reqwest::Url;
+use tokio::stream::StreamExt;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct MatchResult<'a> {
     pub rule: &'a str,
     pub is_allowed: bool,
+}
+
+pub fn filters_stream(
+    filter_url: Url,
+    update_interval: Duration,
+) -> Result<impl Stream<Item = DomainsFilter>> {
+    Ok(
+        create_files_stream(filter_url, update_interval)?.filter_map(|filter| {
+            let domains_filter = std::str::from_utf8(filter.as_ref())
+                .map_err(anyhow::Error::from)
+                .and_then(DomainsFilter::new);
+            match domains_filter {
+                Ok(filter) => Some(filter),
+                Err(err) => {
+                    error!("Failed to create filter. Err: {:#}", err);
+                    None
+                }
+            }
+        }),
+    )
 }
 
 #[derive(Debug)]

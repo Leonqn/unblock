@@ -1,3 +1,5 @@
+use std::sync::RwLock;
+
 use crate::{
     cache::Cache,
     dns::message::{Query, Response},
@@ -7,7 +9,6 @@ use super::DnsClient;
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use tokio::sync::RwLock;
 
 pub struct CachedClient<C> {
     inner_client: C,
@@ -25,16 +26,16 @@ where
         }
     }
 
-    async fn get_from_cache(&self, query: &Query) -> Option<Response> {
-        let cache = self.cache.read().await;
+    fn get_from_cache(&self, query: &Query) -> Option<Response> {
+        let cache = self.cache.read().unwrap();
         let cached_response = cache.get(&query.bytes().slice(2..))?;
         let mut response = BytesMut::from(cached_response.as_ref());
         response[0..2].copy_from_slice(&query.bytes()[0..2]);
         Some(Response::from_bytes(response.freeze()).expect("Must be valid response"))
     }
 
-    async fn insert_to_cache(&self, query: &Query, response: &Response) -> Result<()> {
-        let mut cache = self.cache.write().await;
+    fn insert_to_cache(&self, query: &Query, response: &Response) -> Result<()> {
+        let mut cache = self.cache.write().unwrap();
         let ttl = response.parse()?.min_ttl();
         if let Some(ttl) = ttl {
             cache.insert(query.bytes().slice(2..), response.bytes().clone(), ttl);
@@ -50,11 +51,11 @@ where
     C: DnsClient,
 {
     async fn send(&self, query: Query) -> Result<Response> {
-        match self.get_from_cache(&query).await {
+        match self.get_from_cache(&query) {
             Some(response) => Ok(response),
             None => {
                 let response = self.inner_client.send(query.clone()).await?;
-                self.insert_to_cache(&query, &response).await?;
+                self.insert_to_cache(&query, &response)?;
                 Ok(response)
             }
         }

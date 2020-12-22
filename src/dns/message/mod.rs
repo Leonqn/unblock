@@ -27,7 +27,6 @@ impl Query {
         &self.header
     }
 
-    #[allow(dead_code)]
     pub fn parse(&self) -> Result<Message> {
         Message::from_packet(&self.bytes())
     }
@@ -106,8 +105,12 @@ impl<'m> Message<'m> {
             })
     }
 
-    pub fn domains<'a>(&'a self) -> impl Iterator<Item = &'a [&'a str]> + 'a {
-        self.questions.iter().flatten().map(|q| q.name.as_slice())
+    pub fn domains<'a>(&'a self) -> impl Iterator<Item = String> + 'a {
+        self.questions
+            .iter()
+            .flatten()
+            .map(|q| q.name.as_slice())
+            .map(|d| d.join("."))
     }
 
     pub fn min_ttl(&self) -> Option<Duration> {

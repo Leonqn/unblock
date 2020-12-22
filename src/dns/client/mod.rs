@@ -7,6 +7,7 @@ mod choice;
 mod doh;
 mod round_robin;
 mod udp;
+mod ads_block;
 
 pub use cache::*;
 pub use choice::*;

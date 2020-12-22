@@ -36,7 +36,6 @@ where
         let through_first = query
             .parse()?
             .domains()
-            .map(|d| d.join("."))
             .any(|d| self.through_first_domains.contains(&d));
         if through_first {
             self.first.send(query).await

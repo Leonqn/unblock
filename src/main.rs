@@ -14,13 +14,14 @@ use serde::Deserialize;
 use tokio::{stream::StreamExt, sync::oneshot};
 use unblock::Unblocker;
 
+mod ads_filter;
 mod blacklist;
 mod cache;
 mod dns;
 mod dns_handler;
 mod routers;
 mod unblock;
-pub mod ads;
+mod files_stream;
 
 #[derive(Deserialize)]
 struct Config {
@@ -58,7 +59,7 @@ async fn create_server(config: Config) -> Result<impl std::future::Future<Output
         cancel_rx,
     ));
     let router_client = KeeneticClient::new(config.router_api_uri.parse()?, config.route_interface);
-    let blacklists = blacklist::create_blacklists_stream(
+    let blacklists = blacklist::blacklists(
         config.blacklist_dump_uri.parse()?,
         config.blacklist_update_interval,
     )
