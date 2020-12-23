@@ -21,9 +21,11 @@ pub fn filters_stream(
 ) -> Result<impl Stream<Item = DomainsFilter>> {
     Ok(
         create_files_stream(filter_url, update_interval)?.filter_map(|filter| {
-            let domains_filter = std::str::from_utf8(filter.as_ref())
-                .map_err(anyhow::Error::from)
-                .and_then(DomainsFilter::new);
+            let domains_filter = tokio::task::block_in_place(|| {
+                std::str::from_utf8(filter.as_ref())
+                    .map_err(anyhow::Error::from)
+                    .and_then(DomainsFilter::new)
+            });
             match domains_filter {
                 Ok(filter) => Some(filter),
                 Err(err) => {

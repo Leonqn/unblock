@@ -28,7 +28,7 @@ pub fn create_files_stream(
                     }
                     Err(err) => {
                         error!(
-                            "Error {:#} occured while downloading {}, retrying",
+                            "Error {:#} occured while downloading {}. Retrying",
                             err, url
                         );
                         delay_for(Duration::from_secs(1)).await
