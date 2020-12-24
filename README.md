@@ -1,4 +1,4 @@
 # Unblock
-Приложение, которое работает как dns proxy и прописывает статические маршруты роутеру keenetic для ip адресов, оказавшихся в [дампе роскомнадзора](https://github.com/zapret-info/z-i).
-
-config.example.yml - пример конфига
+Приложение, которое работает как dns proxy и умеет: 
+1. Прописывать статические маршруты роутеру keenetic для ip адресов, оказавшихся в [дампе роскомнадзора](https://github.com/zapret-info/z-i)
+2. Блокировать рекламу используя список правил adguard https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt 

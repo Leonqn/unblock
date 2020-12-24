@@ -133,12 +133,10 @@ fn parse_name(label_part: &[u8]) -> IResult<&[u8], Vec<&str>> {
 }
 
 fn parse_pointer(label_part: &[u8]) -> IResult<&[u8], u16> {
-    let parser = |i| {
-        tuple((
-            nom::bits::complete::tag(3u8, 2u8),
-            nom::bits::complete::take::<_, u16, _, nom::error::Error<_>>(14u8),
-        ))(i)
-    };
+    let parser = tuple((
+        nom::bits::complete::tag(3u8, 2u8),
+        nom::bits::complete::take::<_, u16, _, nom::error::Error<_>>(14u8),
+    ));
     map(bits(parser), |(_, pointer)| pointer)(label_part)
 }
 
