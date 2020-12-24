@@ -72,6 +72,7 @@ fn create_ads_block_if_needed(
             let domains_filter_stream = ads_filter::filters_stream(
                 config.filter_uri.parse()?,
                 config.filter_update_interval,
+                config.manual_rules,
             )?;
             Ok(Either::Left(AdsBlockClient::new(
                 client,
@@ -180,6 +181,7 @@ mod tests {
                 filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
                     .to_owned(),
                 filter_update_interval: Duration::from_secs(10),
+                manual_rules: vec!["@||youtube.com".to_owned()],
             }),
             doh_upstreams: Some(vec![
                 "https://dns.google/dns-query".to_owned(),

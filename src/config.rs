@@ -32,6 +32,7 @@ pub struct AdsBlock {
     pub filter_uri: String,
     #[serde(with = "serde_humantime")]
     pub filter_update_interval: Duration,
+    pub manual_rules: Vec<String>,
 }
 
 #[derive(Deserialize)]
