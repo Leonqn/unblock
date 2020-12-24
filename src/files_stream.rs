@@ -3,7 +3,7 @@ use std::time::Duration;
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use futures_util::stream::{self, Stream};
-use log::error;
+use log::{error, info};
 use reqwest::{header::HeaderValue, Client, StatusCode, Url};
 use tokio::time::delay_for;
 
@@ -16,6 +16,7 @@ pub fn create_files_stream(
         (http, None, file_url, true),
         move |(http, etag, url, first_request)| async move {
             loop {
+                info!("Checking {} for new version", url);
                 match try_get_file(&http, url.clone(), etag.clone()).await {
                     Ok(Some((new_etag, body))) => {
                         if !first_request {
