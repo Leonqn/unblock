@@ -10,7 +10,7 @@ edition = "2018"
 anyhow = "1"
 log = "0.4"
 env_logger = "0.8"
-reqwest = { version = "0.10", features = ["stream", "gzip"] }
+reqwest = { version = "0.10", features = ["stream", "gzip", "rustls-tls"] }
 tokio = {version = "0.2", features = ["macros", "udp", "time", "io-util", "rt-threaded", "sync"]}
 serde_json = "1"
 serde = {version = "1", features = ["derive"]}

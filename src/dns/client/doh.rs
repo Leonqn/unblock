@@ -12,6 +12,7 @@ pub struct DohClient {
 }
 
 impl DohClient {
+    #[allow(dead_code)]
     pub fn new(server_url: Url) -> Result<Self> {
         let mut headers = HeaderMap::with_capacity(2);
         headers.insert(
@@ -22,7 +23,11 @@ impl DohClient {
             "Content-Type",
             HeaderValue::from_static("application/dns-message"),
         );
-        let http_client = Client::builder().default_headers(headers).build()?;
+        let http_client = Client::builder()
+            .use_rustls_tls()
+            .http2_prior_knowledge()
+            .default_headers(headers)
+            .build()?;
         Ok(Self {
             http_client,
             server_url,
