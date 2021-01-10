@@ -66,7 +66,7 @@ impl DomainsFilter {
     pub fn match_domain(&self, domain: &str) -> Option<MatchResult> {
         self.allow_matcher
             .match_domain(domain)
-            .or_else(|| self.block_matcher.match_domain(domain))
+            .or_else(|| dbg!(self.block_matcher.match_domain(domain)))
             .map(|x| MatchResult {
                 rule: &x.original_rule,
                 is_allowed: x.is_allow_rule,
@@ -143,11 +143,11 @@ impl Rule {
         } else {
             let mut regex = regex::escape(rule)
                 .replace(r"\*", ".*")
-                .replace(r"\^", "$")
+                .replace(r"\^", "([^ a-zA-Z0-9.%_-]|$)")
                 .replace("://", "");
 
             if let Some(stripped) = regex.strip_prefix(r"\|\|") {
-                regex = String::from(r"([a-zA-z0-9]\-_\.]+\.)?") + stripped;
+                regex = String::from(r"([a-z0-9-_.]+\.|^)") + stripped;
             } else if let Some(stripped) = regex.strip_prefix(r"\|") {
                 regex = String::from("^") + stripped;
             }
@@ -182,6 +182,7 @@ mod tests {
 ||ad.mail.ru^|
 ||ya.ru
 @@||ya.ru
+||ntent.com^
 
         ";
         let filter = DomainsFilter::new(filter).unwrap();
@@ -232,5 +233,6 @@ mod tests {
         );
         assert_eq!(filter.match_domain("durasite.net^"), None);
         assert_eq!(filter.match_domain("play*.videos.vidto.me.asd"), None);
+        assert_eq!(filter.match_domain("raw.githubusercontent.com"), None);
     }
 }
