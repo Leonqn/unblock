@@ -77,8 +77,8 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
                     let request = waiter.request.clone();
                     if let Some(prev_waiter) = waiters.insert(waiter.request.header().id, waiter) {
                         let _ = prev_waiter.waiter.send(Err(anyhow!("Dublicate request id")
-                            .context(format!("prev: {:?}", prev_waiter.request.parse()?))
-                            .context(format!("cur: {:?}", request.parse()?))));
+                            .context(format!("prev: {:?}", prev_waiter.request.parse()))
+                            .context(format!("cur: {:?}", request.parse()))));
                     }
 
                     send.send(&request.bytes()).await?;
