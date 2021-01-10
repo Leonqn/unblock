@@ -15,7 +15,7 @@ use tokio::{
 
 use crate::dns::{
     create_udp_dns_stream,
-    message::{Header, Query, Response},
+    message::{Query, Response},
 };
 
 use super::DnsClient;
@@ -45,7 +45,7 @@ impl DnsClient for UdpClient {
                 waiter: response_tx,
             })
             .expect("Receiver dropped");
-        Response::from_bytes(response_rx.await.expect("Should always receive response")?)
+        response_rx.await.expect("Should always receive response")
     }
 }
 
@@ -58,7 +58,7 @@ enum ClientMessage {
 #[derive(Debug)]
 struct ResponseWaiter {
     request: Query,
-    waiter: oneshot::Sender<Result<Bytes>>,
+    waiter: oneshot::Sender<Result<Response>>,
 }
 
 async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<ResponseWaiter>) {
@@ -84,10 +84,22 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
                     send.send(&request.bytes()).await?;
                 }
                 ClientMessage::Response(response) => {
-                    let response = response?;
-                    let header = Header::from_packet(&response)?;
-                    if let Some(waiter) = waiters.remove(&header.id) {
-                        let _ = waiter.waiter.send(Ok(response));
+                    let response = Response::from_bytes(response?)?;
+                    if let Some(waiter) = waiters.remove(&response.header().id) {
+                        let response = (|| {
+                            let parse_request = waiter.request.parse()?;
+                            let request_domains = parse_request.domains();
+                            let parsed_response = response.parse()?;
+                            let response_domains = parsed_response.domains();
+                            if request_domains.eq(response_domains) {
+                                Ok(response)
+                            } else {
+                                Err(anyhow!("Request and response domains don't match")
+                                    .context(format!("req: {:?}", parse_request))
+                                    .context(format!("res: {:?}", parsed_response)))
+                            }
+                        })();
+                        let _ = waiter.waiter.send(response);
                     }
                 }
             }

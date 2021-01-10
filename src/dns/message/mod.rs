@@ -145,7 +145,7 @@ pub struct Header {
 }
 
 impl Header {
-    pub fn from_packet(packet: &[u8]) -> Result<Header> {
+    fn from_packet(packet: &[u8]) -> Result<Header> {
         match parsers::parse_header(packet) {
             Ok((_, header)) => Ok(header),
             Err(err) => Err(anyhow!(
