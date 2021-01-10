@@ -74,19 +74,20 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
         let handle_response = async {
             match msgs.next().await.expect("Should be infinite") {
                 ClientMessage::Waiter(waiter) => {
-                    if let Some(prev_waiter) =
-                        waiters.insert(waiter.request.header().id, waiter.waiter)
-                    {
-                        let _ = prev_waiter.send(Err(anyhow!("Dublicate request id")));
+                    let request = waiter.request.clone();
+                    if let Some(prev_waiter) = waiters.insert(waiter.request.header().id, waiter) {
+                        let _ = prev_waiter.waiter.send(Err(anyhow!("Dublicate request id")
+                            .context(format!("prev: {:?}", prev_waiter.request.parse()?))
+                            .context(format!("cur: {:?}", request.parse()?))));
                     }
 
-                    send.send(&waiter.request.bytes()).await?;
+                    send.send(&request.bytes()).await?;
                 }
                 ClientMessage::Response(response) => {
                     let response = response?;
                     let header = Header::from_packet(&response)?;
                     if let Some(waiter) = waiters.remove(&header.id) {
-                        let _ = waiter.send(Ok(response));
+                        let _ = waiter.waiter.send(Ok(response));
                     }
                 }
             }
