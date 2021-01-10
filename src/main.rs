@@ -31,15 +31,25 @@ async fn main() -> Result<()> {
 }
 
 async fn create_service(config: Config) -> Result<impl std::future::Future<Output = ()>> {
-    let dns_pipeline = Arc::new(
-        create_dns_client(
+    let dns_pipeline = {
+        let udp_client = Arc::new(UdpClient::new(config.udp_dns_upstream).await?);
+        let bootstrap_server = dns::server::create_udp_server(config.bind_addr, move |query| {
+            let udp_client = udp_client.clone();
+            async move { udp_client.send(query).await }
+        })
+        .await?;
+        let dns_pipeline = create_dns_client(
             config.doh_upstreams,
             config.udp_dns_upstream,
             config.ads_block,
             config.unblock,
-        )
-        .await?,
-    );
+        );
+        let dns_pipeline = tokio::select! {
+            _ = bootstrap_server => panic!("should not end"),
+            dns_pipeline = dns_pipeline => dns_pipeline,
+        }?;
+        Arc::new(dns_pipeline)
+    };
 
     let server = dns::server::create_udp_server(config.bind_addr, move |query| {
         let dns_pipeline = dns_pipeline.clone();
