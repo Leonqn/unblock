@@ -4,7 +4,8 @@ use crate::files_stream::create_files_stream;
 use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use futures_util::stream::Stream;
-use log::error;
+use log::{error, warn};
+use once_cell::sync::OnceCell;
 use regex::Regex;
 use reqwest::Url;
 use tokio::stream::StreamExt;
@@ -68,7 +69,7 @@ impl DomainsFilter {
             .match_domain(domain)
             .or_else(|| self.block_matcher.match_domain(domain))
             .map(|x| MatchResult {
-                rule: &x.original_rule,
+                rule: &x.rule,
                 is_allowed: x.is_allow_rule,
             })
     }
@@ -85,8 +86,7 @@ impl RulesMatcher {
         let substrs = rules
             .iter()
             .map(|rule| {
-                rule.regex
-                    .as_str()
+                rule.rule
                     .split(|c| !char::is_alphanumeric(c))
                     .max_by_key(|x| x.len())
                     .unwrap_or("")
@@ -104,7 +104,7 @@ impl RulesMatcher {
             .find_overlapping_iter(domain)
             .find_map(move |match_res| {
                 let rule = &self.rules[match_res.pattern()];
-                if rule.regex.is_match(domain) {
+                if rule.is_match(domain) {
                     Some(rule)
                 } else {
                     None
@@ -115,8 +115,8 @@ impl RulesMatcher {
 
 #[derive(Debug)]
 struct Rule {
-    regex: Regex,
-    original_rule: String,
+    regex: OnceCell<Result<Regex, regex::Error>>,
+    rule: String,
     is_allow_rule: bool,
 }
 
@@ -124,16 +124,29 @@ impl Rule {
     fn new(rule: &str) -> Result<Self> {
         if let Some(stripped) = rule.strip_prefix("@@") {
             Ok(Self {
-                regex: Regex::new(&Self::create_regex_string(&stripped))?,
-                original_rule: rule.to_owned(),
+                regex: OnceCell::new(),
+                rule: stripped.to_owned(),
                 is_allow_rule: true,
             })
         } else {
             Ok(Self {
-                regex: Regex::new(&Self::create_regex_string(&rule))?,
-                original_rule: rule.to_owned(),
+                regex: OnceCell::new(),
+                rule: rule.to_owned(),
                 is_allow_rule: false,
             })
+        }
+    }
+
+    fn is_match(&self, s: &str) -> bool {
+        let regex = self
+            .regex
+            .get_or_init(|| Regex::new(&Self::create_regex_string(&self.rule)));
+        match regex {
+            Ok(regex) => regex.is_match(s),
+            Err(err) => {
+                warn!("Got bad regex {:#} from rule {}", err, self.rule);
+                false
+            }
         }
     }
 
@@ -206,7 +219,7 @@ mod tests {
             filter.match_domain("dsa.omniture.walmart.com"),
             Some(MatchResult {
                 is_allowed: true,
-                rule: r"@@||omniture.walmart.com^|",
+                rule: r"||omniture.walmart.com^|",
             })
         );
         assert_eq!(
@@ -228,7 +241,7 @@ mod tests {
             filter.match_domain("ya.ru"),
             Some(MatchResult {
                 is_allowed: true,
-                rule: r"@@||ya.ru",
+                rule: r"||ya.ru",
             })
         );
         assert_eq!(filter.match_domain("durasite.net^"), None);

@@ -1879,6 +1879,7 @@ dependencies = [
  "futures-util",
  "log",
  "nom 6.0.1",
+ "once_cell",
  "pretty_assertions",
  "priority-queue",
  "regex",
