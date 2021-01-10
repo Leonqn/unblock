@@ -147,7 +147,7 @@ impl Rule {
                 .replace("://", "");
 
             if let Some(stripped) = regex.strip_prefix(r"\|\|") {
-                regex = String::from(r"([\w\d\-_\.]+\.)?") + stripped;
+                regex = String::from(r"([a-zA-z0-9]\-_\.]+\.)?") + stripped;
             } else if let Some(stripped) = regex.strip_prefix(r"\|") {
                 regex = String::from("^") + stripped;
             }
