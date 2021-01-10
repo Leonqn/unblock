@@ -66,7 +66,7 @@ impl DomainsFilter {
     pub fn match_domain(&self, domain: &str) -> Option<MatchResult> {
         self.allow_matcher
             .match_domain(domain)
-            .or_else(|| dbg!(self.block_matcher.match_domain(domain)))
+            .or_else(|| self.block_matcher.match_domain(domain))
             .map(|x| MatchResult {
                 rule: &x.original_rule,
                 is_allowed: x.is_allow_rule,
