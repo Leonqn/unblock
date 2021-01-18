@@ -41,7 +41,7 @@ where
                 Ok::<_, anyhow::Error>(())
             };
             if let Err(err) = handler.await {
-                error!("Error occured while receiving dns request: {:#}", err)
+                error!("Error occured while receiving dns request: {:?}", err)
             }
         }
     };
@@ -65,7 +65,7 @@ async fn responses_sender(
             Ok::<_, anyhow::Error>(())
         };
         if let Err(err) = send_response.await {
-            error!("Error occured while sending response: {:#}", err)
+            error!("Error occured while sending response: {:?}", err)
         }
     }
 }

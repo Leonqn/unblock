@@ -32,7 +32,7 @@ pub fn filters_stream(
             match domains_filter {
                 Ok(filter) => Some(filter),
                 Err(err) => {
-                    error!("Failed to create filter. Err: {:#}", err);
+                    error!("Failed to create filter. Err: {:?}", err);
                     None
                 }
             }
@@ -144,7 +144,7 @@ impl Rule {
         match regex {
             Ok(regex) => regex.is_match(s),
             Err(err) => {
-                warn!("Got bad regex {:#} from rule {}", err, self.rule);
+                warn!("Got bad regex {:?} from rule {}", err, self.rule);
                 false
             }
         }

@@ -83,7 +83,7 @@ impl<'m> Message<'m> {
         match parsers::parse_message(packet) {
             Ok((_, msg)) => Ok(msg),
             Err(err) => Err(anyhow!(
-                "got error while parsing dns message. Err: {:#}, raw_packet: {:02X?}",
+                "got error while parsing dns message. Err: {:?}, raw_packet: {:02X?}",
                 err,
                 packet
             )),
@@ -149,7 +149,7 @@ impl Header {
         match parsers::parse_header(packet) {
             Ok((_, header)) => Ok(header),
             Err(err) => Err(anyhow!(
-                "got error while parsing dns header. Err: {:#}, raw_packet: {:02X?}",
+                "got error while parsing dns header. Err: {:?}, raw_packet: {:02X?}",
                 err,
                 packet
             )),
