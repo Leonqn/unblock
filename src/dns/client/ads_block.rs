@@ -1,40 +1,23 @@
-use std::sync::Arc;
-
 use super::DnsClient;
 use crate::{
     ads_filter::DomainsFilter,
     dns::message::{Query, Response},
+    last_item::LastItem,
 };
 use anyhow::Result;
-use arc_swap::ArcSwapOption;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::stream::Stream;
-use log::{info, warn};
-use tokio::stream::StreamExt;
+use log::info;
 
 pub struct AdsBlockClient<C> {
     dns_client: C,
-    domains_filter: Arc<ArcSwapOption<DomainsFilter>>,
+    domains_filter: LastItem<DomainsFilter>,
 }
 
 impl<C> AdsBlockClient<C> {
-    pub fn new(
-        dns_client: C,
-        filter_stream: impl Stream<Item = DomainsFilter> + Send + 'static,
-    ) -> Self {
-        let mut filter_stream = Box::pin(filter_stream);
-        let domains_filter = Arc::new(ArcSwapOption::empty());
-        tokio::spawn({
-            let domains_filter = domains_filter.clone();
-            async move {
-                while let Some(filter) = filter_stream.next().await {
-                    info!("Got new filter");
-                    domains_filter.store(Some(Arc::new(filter)));
-                }
-                warn!("Domains filter updater exited")
-            }
-        });
+    pub fn new(dns_client: C, filters: impl Stream<Item = DomainsFilter> + Send + 'static) -> Self {
+        let domains_filter = LastItem::new(filters);
 
         Self {
             dns_client,
@@ -47,7 +30,7 @@ impl<C> AdsBlockClient<C> {
 impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
     async fn send(&self, query: Query) -> Result<Response> {
         let parsed_query = query.parse()?;
-        let domains_filter = self.domains_filter.load();
+        let domains_filter = self.domains_filter.item();
         let match_result = parsed_query.domains().find_map(|domain| {
             domains_filter
                 .as_ref()

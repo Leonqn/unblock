@@ -8,7 +8,7 @@ use tokio::stream::StreamExt;
 
 use crate::files_stream::create_files_stream;
 
-pub async fn blacklists(
+pub fn blacklists(
     blacklist_url: Url,
     update_inverval: Duration,
 ) -> Result<impl Stream<Item = HashSet<Ipv4Addr>>> {

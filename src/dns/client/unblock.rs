@@ -25,7 +25,7 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
         let parsed_response = dns_response.parse()?;
         let unblocked = self
             .unblocker
-            .unblock(parsed_response.ips().collect())
+            .unblock(&parsed_response.ips().collect::<Vec<_>>())
             .await?;
         if let UnblockResponse::Unblocked(ips) = unblocked {
             info!(

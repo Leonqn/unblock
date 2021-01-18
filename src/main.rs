@@ -18,6 +18,7 @@ mod cache;
 mod config;
 mod dns;
 mod files_stream;
+mod last_item;
 mod routers;
 mod unblock;
 
@@ -57,7 +58,7 @@ async fn create_dns_client(
 ) -> Result<impl DnsClient> {
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
-    let unblock_client = create_unblock_if_needed(doh, unblock).await?;
+    let unblock_client = create_unblock_if_needed(doh, unblock)?;
     let cached_client = CachedClient::new(unblock_client);
     let ads_block_client = create_ads_block_if_needed(cached_client, ads_block)?;
     Ok(ads_block_client)
@@ -83,7 +84,7 @@ fn create_ads_block_if_needed(
     }
 }
 
-async fn create_unblock_if_needed(
+fn create_unblock_if_needed(
     client: impl DnsClient,
     config: Option<Unblock>,
 ) -> Result<impl DnsClient> {
@@ -94,14 +95,13 @@ async fn create_unblock_if_needed(
             let blacklists = blacklist::blacklists(
                 config.blacklist_dump_uri.parse()?,
                 config.blacklist_update_interval,
-            )
-            .await?;
+            )?;
             let manual = config.manual_whitelist;
             let blacklists = blacklists.map(move |mut blacklist| {
                 blacklist.extend(manual.iter().copied());
                 blacklist
             });
-            let unblocker = Unblocker::new(blacklists, router_client).await?;
+            let unblocker = Unblocker::new(blacklists, router_client, config.clear_interval);
             Ok(Either::Left(UnblockClient::new(client, unblocker)))
         }
         None => Ok(Either::Right(client)),
@@ -176,6 +176,7 @@ mod tests {
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),
                 manual_whitelist: HashSet::new(),
+                clear_interval: Duration::from_secs(10),
             }),
             ads_block: Some(AdsBlock {
                 filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
