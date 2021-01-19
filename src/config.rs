@@ -43,5 +43,6 @@ pub struct Unblock {
     pub router_api_uri: String,
     pub route_interface: String,
     pub manual_whitelist: HashSet<Ipv4Addr>,
+    #[serde(with = "serde_humantime")]
     pub clear_interval: Duration,
 }
