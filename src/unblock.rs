@@ -108,7 +108,7 @@ async fn router_requests_handler_handler(
                 if !unblocked.is_empty() {
                     let to_clear = unblocked.iter().copied().collect::<Vec<_>>();
                     if let Err(err) = router_client.remove_routes(&to_clear).await {
-                        error!("Error occured while clearing routes: {:?}", err);
+                        error!("Error occured while clearing routes: {:#}", err);
                     }
                     unblocked.clear();
                 }
@@ -123,7 +123,7 @@ async fn load_routed(router_client: &impl RouterClient) -> HashSet<Ipv4Addr> {
             Ok(unblocked) => break unblocked,
             Err(err) => {
                 error!(
-                    "Got error while receiving routed table from router: {:?}",
+                    "Got error while receiving routed table from router: {:#}",
                     err
                 );
             }

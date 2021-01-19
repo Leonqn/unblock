@@ -106,7 +106,7 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
             Ok::<_, anyhow::Error>(())
         };
         if let Err(err) = handle_response.await {
-            error!("Got error while handling dns message: {:?}", err);
+            error!("Got error while handling dns message: {:#}", err);
         }
     }
 }

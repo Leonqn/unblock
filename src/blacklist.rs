@@ -22,7 +22,7 @@ fn parse_csv_dump(dump: &[u8]) -> HashSet<Ipv4Addr> {
         .filter_map(|ips| match std::str::from_utf8(&ips) {
             Ok(ips) => Some(ips),
             Err(err) => {
-                error!("Ips contain non-utf8 symbols. Err: {:?}", err);
+                error!("Ips contain non-utf8 symbols. Err: {:#}", err);
                 None
             }
         })
