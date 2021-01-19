@@ -75,10 +75,12 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
             match msgs.next().await.expect("Should be infinite") {
                 ClientMessage::Waiter(waiter) => {
                     let request = waiter.request.clone();
-                    if let Some(prev_waiter) = waiters.insert(waiter.request.header().id, waiter) {
-                        let _ = prev_waiter.waiter.send(Err(anyhow!("Dublicate request id")
-                            .context(format!("prev: {:?}", prev_waiter.request.parse()))
-                            .context(format!("cur: {:?}", request.parse()))));
+                    if let Some(prev_request) = waiters.insert(waiter.request.header().id, waiter) {
+                        let _ = prev_request.waiter.send(Err(anyhow!(
+                            "Dublicate request id. Previous request: {:?}. Current request: {:?}",
+                            prev_request.request.parse(),
+                            request.parse()
+                        )));
                     }
 
                     send.send(&request.bytes()).await?;
@@ -87,16 +89,14 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
                     let response = Response::from_bytes(response?)?;
                     if let Some(waiter) = waiters.remove(&response.header().id) {
                         let response = (|| {
-                            let parse_request = waiter.request.parse()?;
-                            let request_domains = parse_request.domains();
+                            let parsed_request = waiter.request.parse()?;
+                            let request_domains = parsed_request.domains();
                             let parsed_response = response.parse()?;
                             let response_domains = parsed_response.domains();
                             if request_domains.eq(response_domains) {
                                 Ok(response)
                             } else {
-                                Err(anyhow!("Request and response domains don't match")
-                                    .context(format!("req: {:?}", parse_request))
-                                    .context(format!("res: {:?}", parsed_response)))
+                                Err(anyhow!("Request and response domains don't match. Request: {:?}. Response: {:?}", parsed_request, parsed_response))
                             }
                         })();
                         let _ = waiter.waiter.send(response);
