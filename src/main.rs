@@ -29,7 +29,9 @@ async fn main() -> Result<()> {
     env_logger::init();
     let config = Config::init()?;
     info!("Starting service");
-    create_service(config).await?.await;
+    let metrics_service = create_metrics_server(config.metrics_bind_addr);
+    let main_service = create_service(config).await?;
+    tokio::join!(main_service, metrics_service);
     Ok(())
 }
 
