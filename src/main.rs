@@ -7,10 +7,12 @@ use dns::client::{
     UdpClient, UnblockClient,
 };
 use log::info;
+use prometheus::{Encoder, TextEncoder};
 use reqwest::Url;
 use routers::KeeneticClient;
 use tokio::stream::StreamExt;
 use unblock::Unblocker;
+use warp::Filter;
 
 mod ads_filter;
 mod blacklist;
@@ -136,6 +138,18 @@ fn create_doh_if_needed(
     }
 }
 
+async fn create_metrics_server(bind_addr: SocketAddr) {
+    warp::serve(warp::path("metrics").map(|| {
+        let metric_families = prometheus::gather();
+        let encoder = TextEncoder::new();
+        let mut buffer = vec![];
+        encoder.encode(&metric_families, &mut buffer).unwrap();
+        warp::reply::with_header(buffer, "Content-Type", encoder.format_type())
+    }))
+    .run(bind_addr)
+    .await;
+}
+
 #[cfg(test)]
 mod tests {
     use std::{collections::HashSet, time::Duration};
@@ -165,8 +179,10 @@ mod tests {
         tokio::spawn(router_http_stub());
         tokio::task::yield_now().await;
         let bind_addr = "0.0.0.0:3356".parse()?;
+        let metrics_bind_addr = "0.0.0.0:3357".parse()?;
         let config = Config {
             bind_addr,
+            metrics_bind_addr,
             udp_dns_upstream: "8.8.8.8:53".parse()?,
             unblock: Some(Unblock {
                 blacklist_dump_uri:
