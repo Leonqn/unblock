@@ -4,7 +4,7 @@ use anyhow::Result;
 use futures_util::stream::Stream;
 use log::error;
 use reqwest::Url;
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 
 use crate::files_stream::create_files_stream;
 

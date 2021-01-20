@@ -1,11 +1,11 @@
 use anyhow::Result;
 use log::error;
-use std::{future::Future, net::SocketAddr};
+use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::{
-    net::{udp::SendHalf, UdpSocket},
-    stream::StreamExt,
+    net::UdpSocket,
     sync::mpsc::{unbounded_channel, UnboundedReceiver},
 };
+use tokio_stream::StreamExt;
 
 use super::{
     create_udp_dns_stream,
@@ -20,9 +20,9 @@ where
     Handler: Fn(Query) -> HandlerResp + Send + Sync + 'static,
     HandlerResp: Future<Output = Result<Response>> + Send + 'static,
 {
-    let (recv, send) = UdpSocket::bind(bind_addr).await?.split();
+    let socket = Arc::new(UdpSocket::bind(bind_addr).await?);
     let (responses_tx, responses_rx) = unbounded_channel();
-    let mut requests = Box::pin(create_udp_dns_stream(recv));
+    let mut requests = Box::pin(create_udp_dns_stream(socket.clone()));
 
     let requests_receiver = async move {
         loop {
@@ -47,7 +47,7 @@ where
     };
 
     let server = async {
-        let responses_sender = responses_sender(send, responses_rx);
+        let responses_sender = responses_sender(socket, responses_rx);
         tokio::join!(requests_receiver, responses_sender);
     };
 
@@ -55,13 +55,13 @@ where
 }
 
 async fn responses_sender(
-    mut send_half: SendHalf,
+    socket: Arc<UdpSocket>,
     mut responses: UnboundedReceiver<(SocketAddr, Result<Response>)>,
 ) {
     loop {
         let (sender, response) = responses.recv().await.expect("Sender dropped");
         let send_response = async {
-            send_half.send_to(response?.bytes(), &sender).await?;
+            socket.send_to(response?.bytes(), &sender).await?;
             Ok::<_, anyhow::Error>(())
         };
         if let Err(err) = send_response.await {

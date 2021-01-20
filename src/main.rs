@@ -10,7 +10,7 @@ use log::info;
 use prometheus::{Encoder, TextEncoder};
 use reqwest::Url;
 use routers::KeeneticClient;
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 use unblock::Unblocker;
 use warp::Filter;
 
@@ -24,7 +24,7 @@ mod last_item;
 mod routers;
 mod unblock;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     env_logger::init();
     let config = Config::init()?;
@@ -174,7 +174,7 @@ mod tests {
             .await;
     }
 
-    #[tokio::test(threaded_scheduler)]
+    #[tokio::test]
     async fn should_handle_dns_request() -> Result<()> {
         tokio::spawn(router_http_stub());
         tokio::task::yield_now().await;

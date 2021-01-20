@@ -5,7 +5,6 @@ use crate::{last_item::LastItem, routers::RouterClient};
 use anyhow::Result;
 use log::error;
 use tokio::{
-    stream::Stream,
     sync::{
         mpsc::UnboundedSender,
         mpsc::{unbounded_channel, UnboundedReceiver},
@@ -13,6 +12,7 @@ use tokio::{
     },
     time::{interval_at, Instant},
 };
+use tokio_stream::Stream;
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum UnblockResponse {
@@ -154,7 +154,7 @@ mod tests {
         },
         time::Duration,
     };
-    use tokio::{sync::oneshot, time::delay_for};
+    use tokio::{sync::oneshot, time::sleep};
 
     #[derive(Clone)]
     struct RouterMock {
@@ -217,7 +217,7 @@ mod tests {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
         let unblocker = Unblocker::new(
-            tokio::stream::once(vec![blacklisted_ip].into_iter().collect()),
+            tokio_stream::once(vec![blacklisted_ip].into_iter().collect()),
             router_mock.clone(),
             Duration::from_secs(1),
         );
@@ -235,7 +235,7 @@ mod tests {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
         let unblocker = Unblocker::new(
-            tokio::stream::once(vec![blacklisted_ip].into_iter().collect()),
+            tokio_stream::once(vec![blacklisted_ip].into_iter().collect()),
             router_mock.clone(),
             Duration::from_secs(1),
         );
@@ -254,7 +254,7 @@ mod tests {
         let blacklisted_ip = "65.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
         let unblocker = Unblocker::new(
-            tokio::stream::once(vec![blacklisted_ip].into_iter().collect()),
+            tokio_stream::once(vec![blacklisted_ip].into_iter().collect()),
             router_mock.clone(),
             Duration::from_secs(1),
         );
@@ -274,14 +274,14 @@ mod tests {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
         let unblocker = Arc::new(Unblocker::new(
-            tokio::stream::once(vec![blacklisted_ip].into_iter().collect()),
+            tokio_stream::once(vec![blacklisted_ip].into_iter().collect()),
             router_mock.clone(),
             Duration::from_millis(1),
         ));
         tokio::task::yield_now().await;
 
         unblocker.unblock(&vec![blacklisted_ip]).await?;
-        delay_for(Duration::from_millis(10)).await;
+        sleep(Duration::from_millis(10)).await;
 
         assert!(router_mock.remove_called.load(Ordering::Relaxed));
         Ok(())
@@ -292,7 +292,7 @@ mod tests {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
         let unblocker = Arc::new(Unblocker::new(
-            tokio::stream::once(vec![blacklisted_ip].into_iter().collect()),
+            tokio_stream::once(vec![blacklisted_ip].into_iter().collect()),
             router_mock.clone(),
             Duration::from_secs(1),
         ));

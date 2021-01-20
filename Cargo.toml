@@ -10,18 +10,19 @@ edition = "2018"
 anyhow = "1"
 log = "0.4"
 env_logger = "0.8"
-reqwest = { version = "0.10", features = ["stream", "gzip", "rustls-tls"] }
-tokio = {version = "0.2", features = ["macros", "udp", "time", "io-util", "rt-threaded", "sync"]}
+reqwest = { version = "0.11", features = ["stream", "gzip", "rustls-tls"] }
+tokio = {version = "1", features = ["macros", "net", "time", "rt", "sync", "test-util"]}
+tokio-stream = "0.1"
 serde_json = "1"
 serde = {version = "1", features = ["derive"]}
 futures-util = "0.3"
-bytes = "0.5"
+bytes = "1"
 nom = "6"
 priority-queue = "1"
 async-trait = "0.1"
 config = { version = "0.10", features = ["yaml"] }
 serde-humantime = "0.1"
-warp = "0.2"
+warp = "0.3"
 regex = "1"
 aho-corasick = "0.7"
 arc-swap = "1"

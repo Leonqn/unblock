@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
 use log::{info, warn};
-use tokio::stream::{Stream, StreamExt};
+use tokio_stream::{Stream, StreamExt};
 
 pub struct LastItem<T> {
     item: Arc<ArcSwapOption<T>>,

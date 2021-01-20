@@ -8,7 +8,7 @@ use log::{error, warn};
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use reqwest::Url;
-use tokio::stream::StreamExt;
+use tokio_stream::StreamExt;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct MatchResult<'a> {
@@ -23,12 +23,10 @@ pub fn filters_stream(
 ) -> Result<impl Stream<Item = DomainsFilter>> {
     Ok(
         create_files_stream(filter_url, update_interval)?.filter_map(move |filter| {
-            let domains_filter = tokio::task::block_in_place(|| {
-                let manual_rules = manual_rules.join("\n");
-                std::str::from_utf8(filter.as_ref())
-                    .map_err(anyhow::Error::from)
-                    .and_then(|rules| DomainsFilter::new(&(manual_rules + rules)))
-            });
+            let manual_rules = manual_rules.join("\n");
+            let domains_filter = std::str::from_utf8(filter.as_ref())
+                .map_err(anyhow::Error::from)
+                .and_then(|rules| DomainsFilter::new(&(manual_rules + rules)));
             match domains_filter {
                 Ok(filter) => Some(filter),
                 Err(err) => {

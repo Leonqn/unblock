@@ -1,4 +1,4 @@
-use std::{collections::HashMap, net::SocketAddr};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -6,12 +6,12 @@ use bytes::Bytes;
 use log::error;
 use tokio::{
     net::UdpSocket,
-    stream::StreamExt,
     sync::{
         mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
 };
+use tokio_stream::{wrappers::UnboundedReceiverStream, StreamExt};
 
 use crate::dns::{
     create_udp_dns_stream,
@@ -62,13 +62,13 @@ struct ResponseWaiter {
 }
 
 async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<ResponseWaiter>) {
-    let (recv, mut send) = socket.split();
+    let socket = Arc::new(socket);
     let mut msgs = Box::pin(
-        create_udp_dns_stream(recv)
+        create_udp_dns_stream(socket.clone())
             .map(|r| r.map(|(_, b)| b))
             .map(ClientMessage::Response),
     )
-    .merge(waiters.map(ClientMessage::Waiter));
+    .merge(UnboundedReceiverStream::new(waiters).map(ClientMessage::Waiter));
     let mut waiters = HashMap::new();
     loop {
         let handle_response = async {
@@ -83,7 +83,7 @@ async fn responses_handler(socket: UdpSocket, waiters: UnboundedReceiver<Respons
                         )));
                     }
 
-                    send.send(&request.bytes()).await?;
+                    socket.send(&request.bytes()).await?;
                 }
                 ClientMessage::Response(response) => {
                     let response = Response::from_bytes(response?)?;

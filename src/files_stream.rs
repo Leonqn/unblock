@@ -5,7 +5,7 @@ use bytes::Bytes;
 use futures_util::stream::{self, Stream};
 use log::{error, info};
 use reqwest::{header::HeaderValue, Client, StatusCode, Url};
-use tokio::time::delay_for;
+use tokio::time::sleep;
 
 pub fn create_files_stream(
     file_url: Url,
@@ -20,19 +20,19 @@ pub fn create_files_stream(
                 match try_get_file(&http, url.clone(), etag.clone()).await {
                     Ok(Some((new_etag, body))) => {
                         if !first_request {
-                            delay_for(update_inverval).await;
+                            sleep(update_inverval).await;
                         }
                         return Some((body, (http, new_etag, url, false)));
                     }
                     Ok(None) => {
-                        delay_for(update_inverval).await;
+                        sleep(update_inverval).await;
                     }
                     Err(err) => {
                         error!(
                             "Error {:#} occured while downloading {}. Retrying",
                             err, url
                         );
-                        delay_for(Duration::from_secs(1)).await
+                        sleep(Duration::from_secs(1)).await
                     }
                 }
             }
