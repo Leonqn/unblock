@@ -12,7 +12,6 @@ pub struct DohClient {
 }
 
 impl DohClient {
-    #[allow(dead_code)]
     pub fn new(server_url: Url) -> Result<Self> {
         let mut headers = HeaderMap::with_capacity(2);
         headers.insert(

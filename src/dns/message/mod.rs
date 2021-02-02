@@ -55,7 +55,6 @@ impl Response {
         }
     }
 
-    #[allow(dead_code)]
     pub fn header(&self) -> &Header {
         &self.header
     }
@@ -79,7 +78,7 @@ pub struct Message<'a> {
 }
 
 impl<'m> Message<'m> {
-    fn from_packet<'a>(packet: &'a [u8]) -> Result<Message<'a>> {
+    fn from_packet(packet: &[u8]) -> Result<Message> {
         match parsers::parse_message(packet) {
             Ok((_, msg)) => Ok(msg),
             Err(err) => Err(anyhow!(
@@ -90,7 +89,7 @@ impl<'m> Message<'m> {
         }
     }
 
-    pub fn ips<'a>(&'a self) -> impl Iterator<Item = Ipv4Addr> + 'a {
+    pub fn ips(&self) -> impl Iterator<Item = Ipv4Addr> + '_ {
         self.answer
             .iter()
             .chain(&self.authority)
@@ -105,7 +104,7 @@ impl<'m> Message<'m> {
             })
     }
 
-    pub fn domains<'a>(&'a self) -> impl Iterator<Item = String> + 'a {
+    pub fn domains(&self) -> impl Iterator<Item = String> + '_ {
         self.questions
             .iter()
             .flatten()
