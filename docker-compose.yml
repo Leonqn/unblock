@@ -1,9 +1,9 @@
-version: "3"
+version: "3.9"
 services:
   unblock:
-    build: .
-    ports:
-      - "53:53/udp"
+    build:
+      context: .
+      network: host
     volumes:
       - ./config.yml:/etc/unblock/config.yml
     logging:
@@ -17,6 +17,9 @@ services:
     image: grafana/grafana:latest
     ports:
       - 3000:3000
+    dns: unblock
+    depends_on:
+      - unblock
     logging:
       driver: json-file
       options:
@@ -24,6 +27,9 @@ services:
         max-file: "5"
   prometheus:
     image: prom/prometheus:latest
+    dns: unblock
+    depends_on:
+      - unblock
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     logging:
