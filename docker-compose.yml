@@ -11,6 +11,8 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+    environment:
+      - RUST_LOG=info
   grafana:
     image: grafana/grafana:latest
     ports:
