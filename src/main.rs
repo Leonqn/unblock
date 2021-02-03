@@ -181,7 +181,6 @@ mod tests {
         tokio::spawn(router_http_stub());
         tokio::task::yield_now().await;
         let bind_addr = "0.0.0.0:3356".parse()?;
-        let metrics_bind_addr = "0.0.0.0:3357".parse()?;
         let config = Config {
             bind_addr,
             udp_dns_upstream: "8.8.8.8:53".parse()?,
