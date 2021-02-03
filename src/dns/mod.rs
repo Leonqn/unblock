@@ -6,6 +6,7 @@ use tokio::net::UdpSocket;
 
 pub mod client;
 pub mod message;
+mod metrics;
 pub mod server;
 
 fn create_udp_dns_stream(

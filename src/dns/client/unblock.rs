@@ -1,20 +1,27 @@
 use super::DnsClient;
 use crate::{
-    dns::message::{Query, Response},
+    dns::{
+        message::{Query, Response},
+        metrics::PerDomainCounter,
+    },
     unblock::{UnblockResponse, Unblocker},
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use log::info;
 
 pub struct UnblockClient<C> {
     client: C,
     unblocker: Unblocker,
+    metrics: Metrics,
 }
 
 impl<C> UnblockClient<C> {
     pub fn new(client: C, unblocker: Unblocker) -> Self {
-        Self { client, unblocker }
+        Self {
+            client,
+            unblocker,
+            metrics: Metrics::new(),
+        }
     }
 }
 
@@ -27,13 +34,23 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
             .unblocker
             .unblock(&parsed_response.ips().collect::<Vec<_>>())
             .await?;
-        if let UnblockResponse::Unblocked(ips) = unblocked {
-            info!(
-                "Ips {:?} for domains {:?} were unblocked",
-                ips,
-                parsed_response.domains().collect::<Vec<_>>()
-            )
+        if let UnblockResponse::Unblocked(_) = unblocked {
+            for domain in parsed_response.domains() {
+                self.metrics.unblocked.inc(&domain);
+            }
         }
         Ok(dns_response)
+    }
+}
+
+struct Metrics {
+    unblocked: PerDomainCounter,
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            unblocked: PerDomainCounter::new("requests_unblocked"),
+        }
     }
 }

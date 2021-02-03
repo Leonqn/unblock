@@ -1,15 +1,16 @@
 use super::DnsClient;
 use crate::{
     ads_filter::DomainsFilter,
-    dns::message::{Query, Response},
+    dns::{
+        message::{Query, Response},
+        metrics::PerDomainCounter,
+    },
     last_item::LastItem,
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::stream::Stream;
-use log::info;
-use prometheus::{register_int_counter, IntCounter};
 
 pub struct AdsBlockClient<C> {
     dns_client: C,
@@ -41,11 +42,7 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
         });
         match match_result {
             Some((match_result, domain)) if !match_result.is_allowed => {
-                self.metrics.requests_blocked.inc();
-                info!(
-                    "Blocking. Matched rule {:?} for domain {}",
-                    match_result, domain
-                );
+                self.metrics.blocked.inc(&domain);
                 let mut blocked_resp = BytesMut::from(query.bytes().as_ref());
                 blocked_resp[2] = 0x81;
                 blocked_resp[3] = 0x83;
@@ -57,13 +54,13 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
 }
 
 struct Metrics {
-    requests_blocked: IntCounter,
+    blocked: PerDomainCounter,
 }
 
 impl Metrics {
     fn new() -> Self {
         Self {
-            requests_blocked: register_int_counter!("requests_blocked", "").unwrap(),
+            blocked: PerDomainCounter::new("requests_blocked"),
         }
     }
 }

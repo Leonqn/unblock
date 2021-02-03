@@ -10,7 +10,6 @@ use serde::Deserialize;
 #[derive(Deserialize)]
 pub struct Config {
     pub bind_addr: SocketAddr,
-    pub metrics_bind_addr: SocketAddr,
     pub udp_dns_upstream: SocketAddr,
     pub doh_upstreams: Option<Vec<String>>,
     pub unblock: Option<Unblock>,

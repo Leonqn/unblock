@@ -8,6 +8,7 @@ use tokio_stream::StreamExt;
 use super::{
     create_udp_dns_stream,
     message::{Query, Response},
+    metrics::PerDomainCounter,
 };
 
 pub async fn create_udp_server<Handler, HandlerResp>(
@@ -25,10 +26,12 @@ where
         loop {
             let request = requests.next().await.expect("Should be infinite");
             let timer = metrics.response_time.start_timer();
-            metrics.requests_count.inc();
             let handler = || {
                 let (sender, request) = request?;
                 let query = Query::from_bytes(request)?;
+                for domain in query.parse()?.domains() {
+                    metrics.requests_count.inc(&domain);
+                }
                 let handler_fut = request_handler(query);
                 let socket = socket.clone();
                 let metrics = metrics.clone();
@@ -57,7 +60,7 @@ where
 }
 
 struct Metrics {
-    requests_count: IntCounter,
+    requests_count: PerDomainCounter,
     requests_errors: IntCounter,
     handling_errors: IntCounter,
     response_time: Histogram,
@@ -66,10 +69,10 @@ struct Metrics {
 impl Metrics {
     fn new() -> Self {
         Metrics {
-            requests_count: register_int_counter!("requests_count", "").unwrap(),
-            requests_errors: register_int_counter!("requests_errors", "").unwrap(),
-            handling_errors: register_int_counter!("handling_errors", "").unwrap(),
-            response_time: register_histogram!("response_time", "").unwrap(),
+            requests_count: PerDomainCounter::new("requests_count"),
+            requests_errors: register_int_counter!("request_errors", "request_errors").unwrap(),
+            handling_errors: register_int_counter!("handling_errors", "handling_errors").unwrap(),
+            response_time: register_histogram!("response_time", "response_time").unwrap(),
         }
     }
 }
