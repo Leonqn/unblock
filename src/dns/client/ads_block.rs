@@ -9,10 +9,12 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::stream::Stream;
 use log::info;
+use prometheus::{register_int_counter, IntCounter};
 
 pub struct AdsBlockClient<C> {
     dns_client: C,
     domains_filter: LastItem<DomainsFilter>,
+    metrics: Metrics,
 }
 
 impl<C> AdsBlockClient<C> {
@@ -22,6 +24,7 @@ impl<C> AdsBlockClient<C> {
         Self {
             dns_client,
             domains_filter,
+            metrics: Metrics::new(),
         }
     }
 }
@@ -38,6 +41,7 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
         });
         match match_result {
             Some((match_result, domain)) if !match_result.is_allowed => {
+                self.metrics.requests_blocked.inc();
                 info!(
                     "Blocking. Matched rule {:?} for domain {}",
                     match_result, domain
@@ -48,6 +52,18 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
                 Response::from_bytes(blocked_resp.freeze())
             }
             _ => self.dns_client.send(query).await,
+        }
+    }
+}
+
+struct Metrics {
+    requests_blocked: IntCounter,
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Self {
+            requests_blocked: register_int_counter!("requests_blocked", "").unwrap(),
         }
     }
 }

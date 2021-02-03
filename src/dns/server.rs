@@ -1,5 +1,6 @@
 use anyhow::Result;
 use log::error;
+use prometheus::{register_histogram, register_int_counter, Histogram, IntCounter};
 use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
 use tokio_stream::StreamExt;
@@ -19,15 +20,18 @@ where
 {
     let socket = Arc::new(UdpSocket::bind(bind_addr).await?);
     let mut requests = Box::pin(create_udp_dns_stream(socket.clone()));
-
+    let metrics = Arc::new(Metrics::new());
     let requests_receiver = async move {
         loop {
             let request = requests.next().await.expect("Should be infinite");
+            let timer = metrics.response_time.start_timer();
+            metrics.requests_count.inc();
             let handler = || {
                 let (sender, request) = request?;
                 let query = Query::from_bytes(request)?;
                 let handler_fut = request_handler(query);
                 let socket = socket.clone();
+                let metrics = metrics.clone();
                 tokio::spawn(async move {
                     let handle_and_send = async {
                         let response = handler_fut.await?;
@@ -35,16 +39,37 @@ where
                         Ok::<_, anyhow::Error>(())
                     };
                     if let Err(err) = handle_and_send.await {
+                        metrics.handling_errors.inc();
                         error!("Error occured while sending response: {:#}", err);
                     }
+                    timer.observe_duration();
                 });
                 Ok::<_, anyhow::Error>(())
             };
             if let Err(err) = handler() {
-                error!("Error occured while receiving dns request: {:?}", err)
+                metrics.requests_errors.inc();
+                error!("Error occured while receiving dns request: {:#}", err)
             }
         }
     };
 
     Ok(requests_receiver)
+}
+
+struct Metrics {
+    requests_count: IntCounter,
+    requests_errors: IntCounter,
+    handling_errors: IntCounter,
+    response_time: Histogram,
+}
+
+impl Metrics {
+    fn new() -> Self {
+        Metrics {
+            requests_count: register_int_counter!("requests_count", "").unwrap(),
+            requests_errors: register_int_counter!("requests_errors", "").unwrap(),
+            handling_errors: register_int_counter!("handling_errors", "").unwrap(),
+            response_time: register_histogram!("response_time", "").unwrap(),
+        }
+    }
 }
