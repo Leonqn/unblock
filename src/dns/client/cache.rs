@@ -75,7 +75,7 @@ struct Metrics {
 impl Metrics {
     fn new() -> Self {
         Self {
-            cache_hits: register_int_counter!("cache_hits", "cache_hits"),
+            cache_hits: register_int_counter!("cache_hits", "cache_hits").unwrap(),
         }
     }
 }
