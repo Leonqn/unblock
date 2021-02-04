@@ -8,20 +8,16 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
+use once_cell::sync::Lazy;
 
 pub struct UnblockClient<C> {
     client: C,
     unblocker: Unblocker,
-    metrics: Metrics,
 }
 
 impl<C> UnblockClient<C> {
     pub fn new(client: C, unblocker: Unblocker) -> Self {
-        Self {
-            client,
-            unblocker,
-            metrics: Metrics::new(),
-        }
+        Self { client, unblocker }
     }
 }
 
@@ -36,12 +32,14 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
             .await?;
         if let UnblockResponse::Unblocked(_) = unblocked {
             for domain in parsed_response.domains() {
-                self.metrics.unblocked.inc(&domain);
+                METRICS.unblocked.inc(&domain);
             }
         }
         Ok(dns_response)
     }
 }
+
+static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
 
 struct Metrics {
     unblocked: PerDomainCounter,

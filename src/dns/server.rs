@@ -1,5 +1,6 @@
 use anyhow::Result;
 use log::error;
+use once_cell::sync::Lazy;
 use prometheus::{register_histogram, register_int_counter, Histogram, IntCounter};
 use std::{future::Future, net::SocketAddr, sync::Arc};
 use tokio::net::UdpSocket;
@@ -21,18 +22,16 @@ where
 {
     let socket = Arc::new(UdpSocket::bind(bind_addr).await?);
     let mut requests = Box::pin(create_udp_dns_stream(socket.clone()));
-    let metrics = Arc::new(Metrics::new());
     let requests_receiver = async move {
         loop {
             let request = requests.next().await.expect("Should be infinite");
-            let timer = metrics.response_time.start_timer();
+            let timer = METRICS.response_time.start_timer();
             let handler = || {
                 let (sender, request) = request?;
-                metrics.requests_count.inc(sender.ip());
+                METRICS.requests_count.inc(sender.ip());
                 let query = Query::from_bytes(request)?;
                 let handler_fut = request_handler(query);
                 let socket = socket.clone();
-                let metrics = metrics.clone();
                 tokio::spawn(async move {
                     let handle_and_send = async {
                         let response = handler_fut.await?;
@@ -40,7 +39,7 @@ where
                         Ok::<_, anyhow::Error>(())
                     };
                     if let Err(err) = handle_and_send.await {
-                        metrics.handling_errors.inc();
+                        METRICS.handling_errors.inc();
                         error!("Error occured while sending response: {:#}", err);
                     }
                     timer.observe_duration();
@@ -48,7 +47,7 @@ where
                 Ok::<_, anyhow::Error>(())
             };
             if let Err(err) = handler() {
-                metrics.requests_errors.inc();
+                METRICS.requests_errors.inc();
                 error!("Error occured while receiving dns request: {:#}", err)
             }
         }
@@ -56,6 +55,8 @@ where
 
     Ok(requests_receiver)
 }
+
+static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
 
 struct Metrics {
     requests_count: PerIpCounter,

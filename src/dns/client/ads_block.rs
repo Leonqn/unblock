@@ -11,11 +11,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::stream::Stream;
+use once_cell::sync::Lazy;
 
 pub struct AdsBlockClient<C> {
     dns_client: C,
     domains_filter: LastItem<DomainsFilter>,
-    metrics: Metrics,
 }
 
 impl<C> AdsBlockClient<C> {
@@ -25,7 +25,6 @@ impl<C> AdsBlockClient<C> {
         Self {
             dns_client,
             domains_filter,
-            metrics: Metrics::new(),
         }
     }
 }
@@ -42,7 +41,7 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
         });
         match match_result {
             Some((match_result, domain)) if !match_result.is_allowed => {
-                self.metrics.blocked.inc(&domain);
+                METRICS.blocked.inc(&domain);
                 let mut blocked_resp = BytesMut::from(query.bytes().as_ref());
                 blocked_resp[2] = 0x81;
                 blocked_resp[3] = 0x83;
@@ -52,6 +51,8 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
         }
     }
 }
+
+static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
 
 struct Metrics {
     blocked: PerDomainCounter,
