@@ -24,7 +24,7 @@ mod last_item;
 mod routers;
 mod unblock;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
     let config = Config::init()?;
