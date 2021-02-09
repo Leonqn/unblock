@@ -22,11 +22,7 @@ impl DohClient {
             "Content-Type",
             HeaderValue::from_static("application/dns-message"),
         );
-        let http_client = Client::builder()
-            .use_rustls_tls()
-            .http2_prior_knowledge()
-            .default_headers(headers)
-            .build()?;
+        let http_client = Client::builder().default_headers(headers).build()?;
         Ok(Self {
             http_client,
             server_url,
