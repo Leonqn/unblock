@@ -51,7 +51,7 @@ impl Response {
                 header,
             })
         } else {
-            Err(anyhow!("Got dns response"))
+            Err(anyhow!("Got dns query"))
         }
     }
 

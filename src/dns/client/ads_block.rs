@@ -11,6 +11,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::stream::Stream;
+use log::info;
 use once_cell::sync::Lazy;
 
 pub struct AdsBlockClient<C> {
@@ -42,6 +43,7 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
         match match_result {
             Some((match_result, domain)) if !match_result.is_allowed => {
                 METRICS.blocked.inc(&domain);
+                info!("Domain {} blocked by rule {:}", domain, match_result.rule);
                 let mut blocked_resp = BytesMut::from(query.bytes().as_ref());
                 blocked_resp[2] = 0x81;
                 blocked_resp[3] = 0x83;
