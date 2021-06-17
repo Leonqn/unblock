@@ -1,14 +1,11 @@
 use super::DnsClient;
 use crate::{
-    dns::{
-        message::{Query, Response},
-        metrics::PerDomainCounter,
-    },
+    dns::message::{Query, Response},
     unblock::{UnblockResponse, Unblocker},
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use once_cell::sync::Lazy;
+use log::info;
 
 pub struct UnblockClient<C> {
     client: C,
@@ -32,23 +29,9 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
             .await?;
         if let UnblockResponse::Unblocked(_) = unblocked {
             for domain in parsed_response.domains() {
-                METRICS.unblocked.inc(&domain);
+                info!("domain {} unblocked", domain);
             }
         }
         Ok(dns_response)
-    }
-}
-
-static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
-
-struct Metrics {
-    unblocked: PerDomainCounter,
-}
-
-impl Metrics {
-    fn new() -> Self {
-        Self {
-            unblocked: PerDomainCounter::new("requests_unblocked"),
-        }
     }
 }

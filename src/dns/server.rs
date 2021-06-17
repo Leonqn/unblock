@@ -9,7 +9,6 @@ use tokio_stream::StreamExt;
 use super::{
     create_udp_dns_stream,
     message::{Query, Response},
-    metrics::PerIpCounter,
 };
 
 pub async fn create_udp_server<Handler, HandlerResp>(
@@ -28,7 +27,6 @@ where
             let timer = METRICS.response_time.start_timer();
             let handler = || {
                 let (sender, request) = request?;
-                METRICS.requests_count.inc(sender.ip());
                 let query = Query::from_bytes(request)?;
                 let handler_fut = request_handler(query);
                 let socket = socket.clone();
@@ -56,10 +54,9 @@ where
     Ok(requests_receiver)
 }
 
-static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
+static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
 
 struct Metrics {
-    requests_count: PerIpCounter,
     requests_errors: IntCounter,
     handling_errors: IntCounter,
     response_time: Histogram,
@@ -68,7 +65,6 @@ struct Metrics {
 impl Metrics {
     fn new() -> Self {
         Metrics {
-            requests_count: PerIpCounter::new("requests_count"),
             requests_errors: register_int_counter!("requests_errors", "request_errors").unwrap(),
             handling_errors: register_int_counter!("handling_errors", "handling_errors").unwrap(),
             response_time: register_histogram!("response_time", "response_time").unwrap(),

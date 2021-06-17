@@ -67,7 +67,7 @@ where
     }
 }
 
-static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
+static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
 
 struct Metrics {
     cache_hits: IntCounter,

@@ -1,10 +1,7 @@
 use super::DnsClient;
 use crate::{
     ads_filter::DomainsFilter,
-    dns::{
-        message::{Query, Response},
-        metrics::PerDomainCounter,
-    },
+    dns::message::{Query, Response},
     last_item::LastItem,
 };
 use anyhow::Result;
@@ -12,7 +9,6 @@ use async_trait::async_trait;
 use bytes::BytesMut;
 use futures_util::stream::Stream;
 use log::info;
-use once_cell::sync::Lazy;
 
 pub struct AdsBlockClient<C> {
     dns_client: C,
