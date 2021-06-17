@@ -42,7 +42,6 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
         });
         match match_result {
             Some((match_result, domain)) if !match_result.is_allowed => {
-                METRICS.blocked.inc(&domain);
                 info!("Domain {} blocked by rule {:}", domain, match_result.rule);
                 let mut blocked_resp = BytesMut::from(query.bytes().as_ref());
                 blocked_resp[2] = 0x81;
@@ -50,20 +49,6 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
                 Response::from_bytes(blocked_resp.freeze())
             }
             _ => self.dns_client.send(query).await,
-        }
-    }
-}
-
-static METRICS: Lazy<Metrics> = Lazy::new(|| Metrics::new());
-
-struct Metrics {
-    blocked: PerDomainCounter,
-}
-
-impl Metrics {
-    fn new() -> Self {
-        Self {
-            blocked: PerDomainCounter::new("requests_blocked"),
         }
     }
 }
