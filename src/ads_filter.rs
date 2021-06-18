@@ -85,7 +85,7 @@ impl RulesMatcher {
             .iter()
             .map(|rule| {
                 rule.rule
-                    .split(|c| !char::is_alphanumeric(c))
+                    .split(|c| c != '_' && c != '-' && c != '.' && !char::is_alphanumeric(c))
                     .max_by_key(|x| x.len())
                     .unwrap_or("")
             })
