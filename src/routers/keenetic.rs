@@ -24,7 +24,7 @@ impl KeeneticClient {
 
     async fn remove_route(&self, addr: Ipv4Addr) -> Result<()> {
         let request_body = format!(
-            r#"[{{"ip":{{"route":{{"auto":false,"interface":"{interface}","host":"{host}","no":true,"name":"{interface}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
+            r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}","no":true,"name":"{interface}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
             interface = &self.vpn_interface,
             host = addr
         );
