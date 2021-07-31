@@ -33,7 +33,7 @@ impl KeeneticClient {
 
     async fn add_route(&self, addr: Ipv4Addr) -> Result<()> {
         let request_body = format!(
-            r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
+            r#"[{{"ip":{{"route":{{"auto":false,"interface":"{interface}","host":"{host}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
             interface = &self.vpn_interface,
             host = addr
         );
@@ -77,15 +77,14 @@ impl RouterClient for KeeneticClient {
             .collect())
     }
 
-    async fn add_routes(&self, addrs: &[Ipv4Addr]) -> Result<()> {
-        let add_addrs_tasks = addrs.iter().map(|addr| self.add_route(*addr));
+    async fn add_routes(&self, ips: &[Ipv4Addr]) -> Result<()> {
+        let add_addrs_tasks = ips.iter().map(|addr| self.add_route(*addr));
         futures_util::future::try_join_all(add_addrs_tasks).await?;
         Ok(())
     }
 
-    async fn remove_routes(&self, addrs: &[Ipv4Addr]) -> Result<()> {
-        let romove_addrs_tasks = addrs.iter().map(|addr| self.remove_route(*addr));
-        futures_util::future::try_join_all(romove_addrs_tasks).await?;
+    async fn remove_route(&self, ip: Ipv4Addr) -> Result<()> {
+        self.remove_route(ip).await?;
         Ok(())
     }
 }

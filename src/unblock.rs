@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr, time::Duration};
+use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration};
 
 use crate::{last_item::LastItem, routers::RouterClient};
 
@@ -8,7 +8,7 @@ use tokio::{
     sync::{
         mpsc::UnboundedSender,
         mpsc::{unbounded_channel, UnboundedReceiver},
-        oneshot,
+        oneshot, Semaphore,
     },
     time::{interval_at, Instant},
 };
@@ -77,7 +77,8 @@ async fn router_requests_handler(
     clear_interval: Duration,
     mut requests: UnboundedReceiver<AddRoutesRequest>,
 ) {
-    let mut unblocked = load_routed(&router_client).await;
+    let router_client = Arc::new(router_client);
+    let mut unblocked = load_routed(&*router_client).await;
     let mut clear_tick = interval_at(Instant::now() + clear_interval, clear_interval);
     loop {
         tokio::select! {
@@ -105,13 +106,36 @@ async fn router_requests_handler(
                 }
             }
             _ = clear_tick.tick() => {
-                if !unblocked.is_empty() {
-                    let to_clear = unblocked.iter().copied().collect::<Vec<_>>();
-                    if let Err(err) = router_client.remove_routes(&to_clear).await {
-                        error!("Error occured while clearing routes: {:#}", err);
-                    } else {
-                        unblocked.clear();
-                    }
+                    clear_routes(router_client.clone(), &mut unblocked).await;
+            }
+        }
+    }
+}
+
+async fn clear_routes(router_client: Arc<impl RouterClient>, unblocked: &mut HashSet<Ipv4Addr>) {
+    if !unblocked.is_empty() {
+        let paralellism = Arc::new(Semaphore::new(30));
+        let mut tasks = Vec::with_capacity(unblocked.len());
+        for ip in unblocked.clone() {
+            let permit = paralellism
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("Must be not closed");
+            let router_client = router_client.clone();
+            tasks.push(tokio::spawn(async move {
+                router_client.remove_route(ip).await?;
+                drop(permit);
+                Ok::<_, anyhow::Error>(ip)
+            }));
+        }
+        for clear_task in tasks {
+            match clear_task.await.expect("Must not panic") {
+                Ok(cleared_ip) => {
+                    unblocked.remove(&cleared_ip);
+                }
+                Err(err) => {
+                    error!("Error clearing: {:?}", err);
                 }
             }
         }
@@ -207,7 +231,7 @@ mod tests {
             Ok(())
         }
 
-        async fn remove_routes(&self, _ips: &[Ipv4Addr]) -> Result<()> {
+        async fn remove_route(&self, _ip: Ipv4Addr) -> Result<()> {
             self.remove_called.store(true, Ordering::Relaxed);
             Ok(())
         }

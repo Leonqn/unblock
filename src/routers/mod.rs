@@ -13,5 +13,5 @@ pub trait RouterClient: Send + Sync + 'static {
 
     async fn add_routes(&self, ips: &[Ipv4Addr]) -> Result<()>;
 
-    async fn remove_routes(&self, ips: &[Ipv4Addr]) -> Result<()>;
+    async fn remove_route(&self, ip: Ipv4Addr) -> Result<()>;
 }
