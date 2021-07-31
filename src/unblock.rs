@@ -33,7 +33,7 @@ impl Unblocker {
     ) -> Self {
         let (router_requests_tx, router_requests_rx) = unbounded_channel();
         let router_handler =
-            router_requests_handler_handler(router_client, clear_interval, router_requests_rx);
+            router_requests_handler(router_client, clear_interval, router_requests_rx);
         let blacklist = LastItem::new(blacklist);
 
         tokio::spawn(router_handler);
@@ -72,7 +72,7 @@ struct AddRoutesRequest {
     waiter: oneshot::Sender<Result<UnblockResponse>>,
 }
 
-async fn router_requests_handler_handler(
+async fn router_requests_handler(
     router_client: impl RouterClient,
     clear_interval: Duration,
     mut requests: UnboundedReceiver<AddRoutesRequest>,
@@ -109,8 +109,9 @@ async fn router_requests_handler_handler(
                     let to_clear = unblocked.iter().copied().collect::<Vec<_>>();
                     if let Err(err) = router_client.remove_routes(&to_clear).await {
                         error!("Error occured while clearing routes: {:#}", err);
+                    } else {
+                        unblocked.clear();
                     }
-                    unblocked.clear();
                 }
             }
         }
