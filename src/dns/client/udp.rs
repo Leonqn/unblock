@@ -18,7 +18,7 @@ use tokio_stream::StreamExt;
 
 use crate::dns::{
     create_udp_dns_stream,
-    message::{Query, Response},
+    message::{Message, Query, Response},
 };
 
 use super::DnsClient;
@@ -58,6 +58,21 @@ struct Request {
     waiter: oneshot::Sender<Result<Response>>,
 }
 
+#[derive(Debug, Hash, PartialEq, Eq)]
+struct RequestId {
+    id: u16,
+    addr: Vec<String>,
+}
+
+impl RequestId {
+    fn from_message(message: &Message) -> Self {
+        Self {
+            id: message.header.id,
+            addr: message.domains().collect(),
+        }
+    }
+}
+
 async fn responses_handler(socket: UdpSocket, mut requests: UnboundedReceiver<Request>) {
     let socket = Arc::new(socket);
     let mut udp_stream = Box::pin(create_udp_dns_stream(socket.clone()));
@@ -85,19 +100,22 @@ async fn responses_handler(socket: UdpSocket, mut requests: UnboundedReceiver<Re
 }
 
 async fn process_request(
-    waiting_requests: &mut HashMap<u16, Request>,
+    waiting_requests: &mut HashMap<RequestId, Request>,
     socket: &UdpSocket,
     request: Request,
 ) {
-    if let Err(err) = socket.send(&request.query.bytes()).await {
-        let _ = request.waiter.send(Err(err.into()));
-    } else {
-        match waiting_requests.entry(request.query.header().id) {
+    let send_and_parse = async {
+        let message = request.query.parse()?;
+        socket.send(&request.query.bytes()).await?;
+        Ok(message)
+    };
+    match send_and_parse.await {
+        Ok(message) => match waiting_requests.entry(RequestId::from_message(&message)) {
             Entry::Occupied(mut prev_request) => {
                 let err = Err(anyhow!(
                     "Dublicate request id. Previous query: {:?}. Current query: {:?}",
                     prev_request.get().query.parse(),
-                    request.query.parse()
+                    message
                 ));
                 let prev_request = prev_request.insert(request);
                 let _ = prev_request.waiter.send(err);
@@ -105,28 +123,26 @@ async fn process_request(
             Entry::Vacant(x) => {
                 x.insert(request);
             }
+        },
+        Err(err) => {
+            let _ = request.waiter.send(Err(err));
         }
     }
 }
 
-async fn process_response(waiting_requests: &mut HashMap<u16, Request>, response: Response) {
-    if let Some(request) = waiting_requests.remove(&response.header().id) {
-        let response = (|| {
-            let parsed_query = request.query.parse()?;
-            let query_domains = parsed_query.domains();
-            let parsed_response = response.parse()?;
-            let response_domains = parsed_response.domains();
-            if query_domains.eq(response_domains) {
-                Ok(response)
+async fn process_response(waiting_requests: &mut HashMap<RequestId, Request>, response: Response) {
+    let message = response.parse();
+    match message {
+        Ok(message) => {
+            if let Some(request) = waiting_requests.remove(&RequestId::from_message(&message)) {
+                let _ = request.waiter.send(Ok(response));
             } else {
-                Err(anyhow!(
-                    "Request and response domains don't match. Query: {:?}. Response: {:?}",
-                    parsed_query,
-                    parsed_response
-                ))
+                error!("Request from response {:?} missing", message);
             }
-        })();
-        let _ = request.waiter.send(response);
+        }
+        Err(err) => {
+            error!("Bad dns response: {:?}", err)
+        }
     }
 }
 

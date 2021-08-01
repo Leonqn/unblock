@@ -23,10 +23,6 @@ impl Query {
         }
     }
 
-    pub fn header(&self) -> &Header {
-        &self.header
-    }
-
     pub fn parse(&self) -> Result<Message> {
         Message::from_packet(&self.bytes())
     }
@@ -53,10 +49,6 @@ impl Response {
         } else {
             Err(anyhow!("Got dns query"))
         }
-    }
-
-    pub fn header(&self) -> &Header {
-        &self.header
     }
 
     pub fn parse(&self) -> Result<Message> {
