@@ -106,7 +106,7 @@ async fn process_request(
 ) {
     let send_and_parse = async {
         let message = request.query.parse()?;
-        socket.send(&request.query.bytes()).await?;
+        socket.send(request.query.bytes()).await?;
         Ok(message)
     };
     match send_and_parse.await {

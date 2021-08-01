@@ -24,7 +24,7 @@ impl Query {
     }
 
     pub fn parse(&self) -> Result<Message> {
-        Message::from_packet(&self.bytes())
+        Message::from_packet(self.bytes())
     }
 
     pub fn bytes(&self) -> &Bytes {
@@ -52,7 +52,7 @@ impl Response {
     }
 
     pub fn parse(&self) -> Result<Message> {
-        Message::from_packet(&self.bytes())
+        Message::from_packet(self.bytes())
     }
 
     pub fn bytes(&self) -> &Bytes {

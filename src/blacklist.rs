@@ -19,7 +19,7 @@ pub fn blacklists(
 fn parse_csv_dump(dump: &[u8]) -> HashSet<Ipv4Addr> {
     dump.split(|b| *b == b'\n')
         .filter_map(|line| line.split(|b| *b == b';').next())
-        .filter_map(|ips| match std::str::from_utf8(&ips) {
+        .filter_map(|ips| match std::str::from_utf8(ips) {
             Ok(ips) => Some(ips),
             Err(err) => {
                 error!("Ips contain non-utf8 symbols. Err: {:#}", err);

@@ -19,6 +19,6 @@ jobs:
     - name: Rustfmt check
       run: cargo fmt -- --check
     - name: Clippy
-      run: cargo clippy --verbose
+      run: cargo clippy --verbose -- -D warnings
     - name: Run tests
       run: cargo test --verbose
