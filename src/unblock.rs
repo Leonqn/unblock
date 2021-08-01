@@ -7,8 +7,8 @@ use log::error;
 use tokio::{
     sync::{
         mpsc::UnboundedSender,
-        mpsc::{unbounded_channel, UnboundedReceiver},
-        oneshot, Semaphore,
+        mpsc::{unbounded_channel, Sender, UnboundedReceiver},
+        oneshot,
     },
     time::{interval_at, Instant},
 };
@@ -80,6 +80,7 @@ async fn router_requests_handler(
     let router_client = Arc::new(router_client);
     let mut unblocked = load_routed(&*router_client).await;
     let mut clear_tick = interval_at(Instant::now() + clear_interval, clear_interval);
+    let (tx_clear, mut rx_clear) = tokio::sync::mpsc::channel(30);
     loop {
         tokio::select! {
             Some(request) = requests.recv() => {
@@ -105,39 +106,42 @@ async fn router_requests_handler(
                     let _ = request.waiter.send(Ok(UnblockResponse::Skipped));
                 }
             }
-            _ = clear_tick.tick() => {
-                    clear_routes(router_client.clone(), &mut unblocked).await;
+            Some(ip) = rx_clear.recv() => {
+                unblocked.remove(&ip);
+            }
+            _ = clear_tick.tick(), if !unblocked.is_empty() => {
+                let router_client = router_client.clone();
+                let unblocked = unblocked.clone();
+                let tx_clear = tx_clear.clone();
+                tokio::task::spawn(async move {
+                    clear_routes(router_client, unblocked, tx_clear).await;
+                });
             }
         }
     }
 }
 
-async fn clear_routes(router_client: Arc<impl RouterClient>, unblocked: &mut HashSet<Ipv4Addr>) {
+async fn clear_routes(
+    router_client: Arc<impl RouterClient>,
+    unblocked: HashSet<Ipv4Addr>,
+    tx_clear: Sender<Ipv4Addr>,
+) {
     if !unblocked.is_empty() {
-        let paralellism = Arc::new(Semaphore::new(30));
-        let mut tasks = Vec::with_capacity(unblocked.len());
         for ip in unblocked.clone() {
-            let permit = paralellism
+            let permit = tx_clear
                 .clone()
-                .acquire_owned()
+                .reserve_owned()
                 .await
                 .expect("Must be not closed");
             let router_client = router_client.clone();
-            tasks.push(tokio::spawn(async move {
-                router_client.remove_route(ip).await?;
-                drop(permit);
-                Ok::<_, anyhow::Error>(ip)
-            }));
-        }
-        for clear_task in tasks {
-            match clear_task.await.expect("Must not panic") {
-                Ok(cleared_ip) => {
-                    unblocked.remove(&cleared_ip);
-                }
-                Err(err) => {
+            tokio::spawn(async move {
+                if let Err(err) = router_client.remove_route(ip).await {
                     error!("Error clearing: {:?}", err);
+                    permit.release();
+                } else {
+                    let _ = permit.send(ip);
                 }
-            }
+            });
         }
     }
 }
