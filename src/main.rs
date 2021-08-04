@@ -10,7 +10,6 @@ use log::info;
 use prometheus::{Encoder, TextEncoder};
 use reqwest::Url;
 use routers::KeeneticClient;
-use tokio_stream::StreamExt;
 use unblock::Unblocker;
 use warp::Filter;
 
@@ -100,16 +99,13 @@ fn create_unblock_if_needed(
                 config.blacklist_dump_uri.parse()?,
                 config.blacklist_update_interval,
             )?;
-            let manual = config.manual_whitelist;
-            let blacklists = blacklists.map(move |mut blacklist| {
-                blacklist.extend(manual.iter().copied());
-                blacklist
-            });
-            let unblocker = Unblocker::new(blacklists, router_client, config.clear_interval);
+            let unblocker = Unblocker::new(router_client, config.clear_interval);
             Ok(Either::Left(UnblockClient::new(
                 client,
                 unblocker,
                 config.manual_whitelist_dns,
+                config.manual_whitelist,
+                blacklists,
             )))
         }
         None => Ok(Either::Right(client)),
