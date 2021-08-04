@@ -106,7 +106,11 @@ fn create_unblock_if_needed(
                 blacklist
             });
             let unblocker = Unblocker::new(blacklists, router_client, config.clear_interval);
-            Ok(Either::Left(UnblockClient::new(client, unblocker)))
+            Ok(Either::Left(UnblockClient::new(
+                client,
+                unblocker,
+                config.manual_whitelist_dns,
+            )))
         }
         None => Ok(Either::Right(client)),
     }
@@ -193,6 +197,7 @@ mod tests {
                 route_interface: "Ads".to_owned(),
                 manual_whitelist: HashSet::new(),
                 clear_interval: Duration::from_secs(10),
+                manual_whitelist_dns: HashSet::new(),
             }),
             ads_block: Some(AdsBlock {
                 filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
