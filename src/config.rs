@@ -14,6 +14,7 @@ pub struct Config {
     pub doh_upstreams: Option<Vec<String>>,
     pub unblock: Option<Unblock>,
     pub ads_block: Option<AdsBlock>,
+    pub retry_config: RetryConfig,
 }
 
 impl Config {
@@ -25,6 +26,13 @@ impl Config {
         settings.merge(config::File::with_name(&config_name))?;
         Ok(settings.try_into::<Self>()?)
     }
+}
+
+#[derive(Deserialize)]
+pub struct RetryConfig {
+    pub attempts_count: usize,
+    #[serde(with = "serde_humantime")]
+    pub next_attempt_delay: Duration,
 }
 
 #[derive(Deserialize)]

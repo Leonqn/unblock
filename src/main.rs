@@ -1,10 +1,10 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
-use crate::config::{AdsBlock, Config, Unblock};
+use crate::config::{AdsBlock, Config, RetryConfig, Unblock};
 use anyhow::Result;
 use dns::client::{
-    AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, Either, RoundRobinClient,
-    UdpClient, UnblockClient,
+    AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, Either, RetryClient,
+    RoundRobinClient, UdpClient, UnblockClient,
 };
 use log::info;
 use prometheus::{Encoder, TextEncoder};
@@ -41,6 +41,7 @@ async fn create_service(config: Config) -> Result<impl std::future::Future<Outpu
             config.udp_dns_upstream,
             config.ads_block,
             config.unblock,
+            config.retry_config,
         )
         .await?,
     );
@@ -58,10 +59,16 @@ async fn create_dns_client(
     udp_upstream: SocketAddr,
     ads_block: Option<AdsBlock>,
     unblock: Option<Unblock>,
+    retry_config: RetryConfig,
 ) -> Result<impl DnsClient> {
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
-    let unblock_client = create_unblock_if_needed(doh, unblock)?;
+    let retry_client = RetryClient::new(
+        doh,
+        retry_config.attempts_count,
+        retry_config.next_attempt_delay,
+    );
+    let unblock_client = create_unblock_if_needed(retry_client, unblock)?;
     let cached_client = CachedClient::new(unblock_client);
     let ads_block_client = create_ads_block_if_needed(cached_client, ads_block)?;
     Ok(ads_block_client)
@@ -161,7 +168,7 @@ mod tests {
     use warp::Filter;
 
     use crate::{
-        config::{AdsBlock, Unblock},
+        config::{AdsBlock, RetryConfig, Unblock},
         create_service,
         dns::{
             client::{DnsClient, UdpClient},
@@ -206,6 +213,10 @@ mod tests {
                 "https://dns.cloudflare.com/dns-query".to_owned(),
                 "https://dns.quad9.net/dns-query".to_owned(),
             ]),
+            retry_config: RetryConfig {
+                attempts_count: 3,
+                next_attempt_delay: Duration::from_millis(200),
+            },
         };
         let server = create_service(config).await.map_err(|x| dbg!(x))?;
         tokio::spawn(server);
