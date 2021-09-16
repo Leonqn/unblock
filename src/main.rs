@@ -1,6 +1,6 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
-use crate::config::{AdsBlock, Config, RetryConfig, Unblock};
+use crate::config::{AdsBlock, Config, Retry, Unblock};
 use anyhow::Result;
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, Either, RetryClient,
@@ -41,7 +41,7 @@ async fn create_service(config: Config) -> Result<impl std::future::Future<Outpu
             config.udp_dns_upstream,
             config.ads_block,
             config.unblock,
-            config.retry_config,
+            config.retry,
         )
         .await?,
     );
@@ -59,7 +59,7 @@ async fn create_dns_client(
     udp_upstream: SocketAddr,
     ads_block: Option<AdsBlock>,
     unblock: Option<Unblock>,
-    retry_config: RetryConfig,
+    retry_config: Retry,
 ) -> Result<impl DnsClient> {
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
@@ -168,7 +168,7 @@ mod tests {
     use warp::Filter;
 
     use crate::{
-        config::{AdsBlock, RetryConfig, Unblock},
+        config::{AdsBlock, Retry, Unblock},
         create_service,
         dns::{
             client::{DnsClient, UdpClient},
@@ -213,7 +213,7 @@ mod tests {
                 "https://dns.cloudflare.com/dns-query".to_owned(),
                 "https://dns.quad9.net/dns-query".to_owned(),
             ]),
-            retry_config: RetryConfig {
+            retry: Retry {
                 attempts_count: 3,
                 next_attempt_delay: Duration::from_millis(200),
             },
