@@ -30,11 +30,13 @@ where
             let request_handler = request_handler.clone();
             let handle_request = async move {
                 let (mut socket, _) = accept_result?;
-                let mut buf = vec![];
-                socket.read_to_end(&mut buf).await?;
+                let packet_len = socket.read_u16().await?;
+                let mut buf = vec![0; packet_len as usize];
+                socket.read_exact(&mut buf).await?;
                 let bytes = Bytes::copy_from_slice(&buf);
                 let query = Query::from_bytes(bytes)?;
                 let response = request_handler(query).await?;
+                socket.write_u16(response.bytes().len() as u16).await?;
                 socket.write_all(response.bytes()).await?;
                 Ok::<_, anyhow::Error>(())
             };

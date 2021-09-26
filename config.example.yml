@@ -1,0 +1,25 @@
+bind_addr: 0.0.0.0:53
+metrics_bind_addr: 0.0.0.0:8082
+udp_dns_upstream: 8.8.8.8:53
+doh_upstreams:
+  - https://dns.google/dns-query
+  - https://dns.cloudflare.com/dns-query
+  - https://dns.quad9.net/dns-query
+unblock:
+ blacklist_dump_uri: https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv
+ blacklist_update_interval: 60 minutes
+ router_api_uri: http://192.168.1.1:79
+ route_interface: OpenVPN1
+ clear_interval: 12 hours
+ manual_whitelist_dns:
+   - linkedin.com
+   - www.linkedin.com
+ads_block:
+ filter_uri: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
+ filter_update_interval: 60 minutes
+ manual_rules:
+   - "@@||youtube.com^"
+   - "@@||amplitude.com^"
+retry:
+  attempts_count: 3
+  next_attempt_delay: 200 millis
