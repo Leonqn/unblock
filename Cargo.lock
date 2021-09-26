@@ -288,9 +288,9 @@ dependencies = [
 
 [[package]]
 name = "fure"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b40132250509920d5e3c65b7a8371dfd9a1065153717af742a7e412d6eba030"
+checksum = "90c35e604669b132690b442fe14e6c1c316432d2c8dc83383cdfcae09c49a8f3"
 dependencies = [
  "pin-project-lite",
  "tokio",
