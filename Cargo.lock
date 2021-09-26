@@ -287,6 +287,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fure"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a838844516c905aaf3a2cd9e0faedaeb93887d02bb993d6adc3e19a9e3ed444"
+dependencies = [
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "futures"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1663,6 +1673,7 @@ dependencies = [
  "bytes",
  "config",
  "env_logger",
+ "fure",
  "futures-util",
  "log",
  "nom 7.0.0",
