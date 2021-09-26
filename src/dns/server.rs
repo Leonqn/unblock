@@ -1,15 +1,52 @@
 use anyhow::Result;
+use bytes::Bytes;
 use log::error;
 use once_cell::sync::Lazy;
 use prometheus::{register_histogram, register_int_counter, Histogram, IntCounter};
 use std::{future::Future, net::SocketAddr, sync::Arc};
-use tokio::net::UdpSocket;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, UdpSocket},
+};
 use tokio_stream::StreamExt;
 
 use super::{
     create_udp_dns_stream,
     message::{Query, Response},
 };
+
+pub async fn create_tcp_server<Handler, HandlerResp>(
+    bind_addr: SocketAddr,
+    request_handler: Handler,
+) -> Result<impl Future<Output = ()> + Send + 'static>
+where
+    Handler: Fn(Query) -> HandlerResp + Clone + Send + Sync + 'static,
+    HandlerResp: Future<Output = Result<Response>> + Send + 'static,
+{
+    let listener = Arc::new(TcpListener::bind(bind_addr).await?);
+    let requests_loop = async move {
+        loop {
+            let accept_result = listener.accept().await;
+            let request_handler = request_handler.clone();
+            let handle_request = async move {
+                let (mut socket, _) = accept_result?;
+                let mut buf = vec![];
+                socket.read_to_end(&mut buf).await?;
+                let bytes = Bytes::copy_from_slice(&buf);
+                let query = Query::from_bytes(bytes)?;
+                let response = request_handler(query).await?;
+                socket.write_all(response.bytes()).await?;
+                Ok::<_, anyhow::Error>(())
+            };
+            tokio::spawn(async move {
+                if let Err(err) = handle_request.await {
+                    error!("Error occured while receiving dns tcp request: {:#}", err);
+                }
+            });
+        }
+    };
+    Ok(requests_loop)
+}
 
 pub async fn create_udp_server<Handler, HandlerResp>(
     bind_addr: SocketAddr,

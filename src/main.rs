@@ -46,12 +46,17 @@ async fn create_service(config: Config) -> Result<impl std::future::Future<Outpu
         .await?,
     );
 
-    let server = dns::server::create_udp_server(config.bind_addr, move |query| {
+    let request_handler = move |query| {
         let dns_pipeline = dns_pipeline.clone();
         async move { dns_pipeline.send(query).await }
-    })
-    .await?;
-    Ok(server)
+    };
+    let udp_server =
+        dns::server::create_udp_server(config.bind_addr, request_handler.clone()).await?;
+    let tcp_server = dns::server::create_tcp_server(config.bind_addr, request_handler).await?;
+    let service = async move {
+        tokio::join!(udp_server, tcp_server);
+    };
+    Ok(service)
 }
 
 async fn create_dns_client(
