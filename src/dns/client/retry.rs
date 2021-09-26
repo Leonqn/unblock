@@ -4,7 +4,7 @@ use super::DnsClient;
 use crate::dns::message::{Query, Response};
 use anyhow::Result;
 use async_trait::async_trait;
-use fure::policies::{failed, interval};
+use fure::policies::{attempts, interval};
 
 pub struct RetryClient<C> {
     client: C,
@@ -27,7 +27,7 @@ impl<C: DnsClient> DnsClient for RetryClient<C> {
     async fn send(&self, query: Query) -> Result<Response> {
         fure::retry(
             || self.client.send(query.clone()),
-            failed(interval(self.next_attempt_delay), self.attempts_count),
+            attempts(interval(self.next_attempt_delay), self.attempts_count),
         )
         .await
     }
