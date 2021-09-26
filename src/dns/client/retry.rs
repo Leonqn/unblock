@@ -4,7 +4,7 @@ use super::DnsClient;
 use crate::dns::message::{Query, Response};
 use anyhow::Result;
 use async_trait::async_trait;
-use fure::policies::{interval, failed};
+use fure::policies::{failed, interval};
 
 pub struct RetryClient<C> {
     client: C,
