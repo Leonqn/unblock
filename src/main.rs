@@ -115,8 +115,8 @@ fn create_unblock_if_needed(
             Ok(Either::Left(UnblockClient::new(
                 client,
                 unblocker,
-                config.manual_whitelist_dns,
-                config.manual_whitelist,
+                config.manual_whitelist_dns.unwrap_or_default(),
+                config.manual_whitelist.unwrap_or_default(),
                 blacklists,
             )))
         }
@@ -203,9 +203,9 @@ mod tests {
                 blacklist_update_interval: Duration::from_secs(10),
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),
-                manual_whitelist: HashSet::new(),
+                manual_whitelist: Some(HashSet::new()),
                 clear_interval: Duration::from_secs(10),
-                manual_whitelist_dns: HashSet::new(),
+                manual_whitelist_dns: Some(HashSet::new()),
             }),
             ads_block: Some(AdsBlock {
                 filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"

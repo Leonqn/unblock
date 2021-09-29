@@ -50,8 +50,8 @@ pub struct Unblock {
     pub blacklist_update_interval: Duration,
     pub router_api_uri: String,
     pub route_interface: String,
-    pub manual_whitelist: HashSet<Ipv4Addr>,
-    pub manual_whitelist_dns: HashSet<String>,
+    pub manual_whitelist: Option<HashSet<Ipv4Addr>>,
+    pub manual_whitelist_dns: Option<HashSet<String>>,
     #[serde(with = "serde_humantime")]
     pub clear_interval: Duration,
 }
