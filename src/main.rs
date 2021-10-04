@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     env_logger::init();
     let config = Config::init()?;
     info!("Starting service");
-    let metrics_service = create_metrics_server("0.0.0.0:9090".parse().unwrap());
+    let metrics_service = create_metrics_server(config.metrics_bind_addr);
     let main_service = create_service(config).await?;
     tokio::join!(main_service, metrics_service);
     Ok(())
@@ -195,6 +195,7 @@ mod tests {
         let bind_addr = "0.0.0.0:3356".parse()?;
         let config = Config {
             bind_addr,
+            metrics_bind_addr: "0.0.0.0:3357".parse()?,
             udp_dns_upstream: "8.8.8.8:53".parse()?,
             unblock: Some(Unblock {
                 blacklist_dump_uri:
