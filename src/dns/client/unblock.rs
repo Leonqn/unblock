@@ -3,6 +3,7 @@ use std::{collections::HashSet, net::Ipv4Addr};
 use super::DnsClient;
 use crate::{
     dns::message::{Message, Query, Response},
+    domains_filter::DomainsFilter,
     last_item::LastItem,
     unblock::{UnblockResponse, Unblocker},
 };
@@ -14,7 +15,7 @@ use log::info;
 pub struct UnblockClient<C> {
     client: C,
     unblocker: Unblocker,
-    manual_dns_whitelist: HashSet<String>,
+    manual_dns_whitelist: DomainsFilter,
     manual_ip_whitelist: HashSet<Ipv4Addr>,
     blacklist: LastItem<HashSet<Ipv4Addr>>,
 }
@@ -23,7 +24,7 @@ impl<C> UnblockClient<C> {
     pub fn new(
         client: C,
         unblocker: Unblocker,
-        manual_dns_whitelist: HashSet<String>,
+        manual_dns_whitelist: DomainsFilter,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
         blacklist: impl Stream<Item = HashSet<Ipv4Addr>> + Send + 'static,
     ) -> Self {
@@ -55,7 +56,7 @@ impl<C> UnblockClient<C> {
             .filter(move |ip| self.manual_ip_whitelist.contains(ip));
         let manual_dns = parsed_response
             .domains()
-            .any(|x| self.manual_dns_whitelist.contains(&x))
+            .any(|x| self.manual_dns_whitelist.match_domain(&x).is_some())
             .then(|| parsed_response.ips())
             .into_iter()
             .flatten();

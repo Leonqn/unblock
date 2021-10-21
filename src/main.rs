@@ -6,6 +6,7 @@ use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, Either, RetryClient,
     RoundRobinClient, UdpClient, UnblockClient,
 };
+use domains_filter::DomainsFilter;
 use log::info;
 use prometheus::{Encoder, TextEncoder};
 use reqwest::Url;
@@ -13,11 +14,11 @@ use routers::KeeneticClient;
 use unblock::Unblocker;
 use warp::Filter;
 
-mod ads_filter;
 mod blacklist;
 mod cache;
 mod config;
 mod dns;
+mod domains_filter;
 mod files_stream;
 mod last_item;
 mod routers;
@@ -85,7 +86,7 @@ fn create_ads_block_if_needed(
 ) -> Result<impl DnsClient> {
     match config {
         Some(config) => {
-            let domains_filter_stream = ads_filter::filters_stream(
+            let domains_filter_stream = domains_filter::filters_stream(
                 config.filter_uri.parse()?,
                 config.filter_update_interval,
                 config.manual_rules,
@@ -115,7 +116,12 @@ fn create_unblock_if_needed(
             Ok(Either::Left(UnblockClient::new(
                 client,
                 unblocker,
-                config.manual_whitelist_dns.unwrap_or_default(),
+                DomainsFilter::new(
+                    &config
+                        .manual_whitelist_dns
+                        .and_then(|x| x.into_iter().reduce(|acc, e| acc + "\n" + &e))
+                        .unwrap_or_default(),
+                )?,
                 config.manual_whitelist.unwrap_or_default(),
                 blacklists,
             )))

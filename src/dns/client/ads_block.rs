@@ -1,6 +1,6 @@
 use super::DnsClient;
 use crate::{
-    ads_filter::DomainsFilter,
+    domains_filter::DomainsFilter,
     dns::message::{Query, Response},
     last_item::LastItem,
 };
