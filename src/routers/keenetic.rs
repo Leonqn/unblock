@@ -31,11 +31,12 @@ impl KeeneticClient {
         self.send_rci(request_body).await
     }
 
-    async fn add_route(&self, addr: Ipv4Addr) -> Result<()> {
+    async fn add_route(&self, addr: Ipv4Addr, comment: &str) -> Result<()> {
         let request_body = format!(
-            r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
+            r#"[{{"ip":{{"route":{{"auto":true,"interface":"{interface}","host":"{host}", "comment": "{comment}"}}}}}},{{"system":{{"configuration":{{"save":true}}}}}}]"#,
             interface = &self.vpn_interface,
-            host = addr
+            host = addr,
+            comment = comment,
         );
         self.send_rci(request_body).await
     }
@@ -77,8 +78,8 @@ impl RouterClient for KeeneticClient {
             .collect())
     }
 
-    async fn add_routes(&self, ips: &[Ipv4Addr]) -> Result<()> {
-        let add_addrs_tasks = ips.iter().map(|addr| self.add_route(*addr));
+    async fn add_routes(&self, ips: &[Ipv4Addr], comment: &str) -> Result<()> {
+        let add_addrs_tasks = ips.iter().map(|addr| self.add_route(*addr, comment));
         futures_util::future::try_join_all(add_addrs_tasks).await?;
         Ok(())
     }

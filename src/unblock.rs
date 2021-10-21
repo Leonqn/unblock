@@ -37,6 +37,7 @@ impl Unblocker {
     pub async fn unblock(
         &self,
         ips: impl IntoIterator<Item = Ipv4Addr>,
+        comment: &str,
     ) -> Result<UnblockResponse> {
         let ips = ips.into_iter().collect::<HashSet<_>>();
         if ips.is_empty() {
@@ -47,6 +48,7 @@ impl Unblocker {
             .send(AddRoutesRequest {
                 ips,
                 waiter: response_tx,
+                comment: comment.to_owned(),
             })
             .expect("Receiver dropped");
 
@@ -58,6 +60,7 @@ impl Unblocker {
 struct AddRoutesRequest {
     ips: HashSet<Ipv4Addr>,
     waiter: oneshot::Sender<Result<UnblockResponse>>,
+    comment: String,
 }
 
 async fn router_requests_handler(
@@ -79,7 +82,7 @@ async fn router_requests_handler(
                     .copied()
                     .collect::<Vec<_>>();
                 if !blocked.is_empty() {
-                    let add_result = router_client.add_routes(&blocked).await;
+                    let add_result = router_client.add_routes(&blocked, &request.comment).await;
                     match add_result {
                         Ok(_) => {
                             unblocked.extend(request.ips.iter().copied());
@@ -212,7 +215,7 @@ mod tests {
             Ok(HashSet::new())
         }
 
-        async fn add_routes(&self, _ips: &[Ipv4Addr]) -> Result<()> {
+        async fn add_routes(&self, _ips: &[Ipv4Addr], _comment: &str) -> Result<()> {
             self.add_calls.fetch_add(1, Ordering::Relaxed);
             let hung = {
                 let guard = self.add_hung.lock().unwrap();
@@ -237,7 +240,7 @@ mod tests {
         let unblocker = Unblocker::new(router_mock.clone(), Duration::from_secs(1));
         tokio::task::yield_now().await;
 
-        let response = unblocker.unblock(vec![blacklisted_ip]).await?;
+        let response = unblocker.unblock(vec![blacklisted_ip], "").await?;
 
         assert_eq!(response, UnblockResponse::Unblocked(vec![blacklisted_ip]));
         assert_eq!(router_mock.add_calls.load(Ordering::Relaxed), 1);
@@ -250,9 +253,9 @@ mod tests {
         let router_mock = RouterMock::new();
         let unblocker = Unblocker::new(router_mock.clone(), Duration::from_secs(1));
         tokio::task::yield_now().await;
-        unblocker.unblock(vec![blacklisted_ip]).await?;
+        unblocker.unblock(vec![blacklisted_ip], "").await?;
 
-        let response = unblocker.unblock(vec![blacklisted_ip]).await?;
+        let response = unblocker.unblock(vec![blacklisted_ip], "").await?;
 
         assert_eq!(response, UnblockResponse::Skipped);
         assert_eq!(router_mock.add_calls.load(Ordering::Relaxed), 1);
@@ -269,7 +272,7 @@ mod tests {
         ));
         tokio::task::yield_now().await;
 
-        unblocker.unblock(vec![blacklisted_ip]).await?;
+        unblocker.unblock(vec![blacklisted_ip], "").await?;
         sleep(Duration::from_millis(10)).await;
 
         assert!(router_mock.remove_called.load(Ordering::Relaxed));
@@ -286,12 +289,12 @@ mod tests {
 
         let t1 = tokio::spawn({
             let unblocker = unblocker.clone();
-            async move { unblocker.unblock(vec![blacklisted_ip]).await.unwrap() }
+            async move { unblocker.unblock(vec![blacklisted_ip], "").await.unwrap() }
         });
         tokio::task::yield_now().await;
         let t2 = tokio::spawn({
             let unblocker = unblocker.clone();
-            async move { unblocker.unblock(vec![blacklisted_ip]).await.unwrap() }
+            async move { unblocker.unblock(vec![blacklisted_ip], "").await.unwrap() }
         });
         tokio::task::yield_now().await;
         hunger.send(()).unwrap();

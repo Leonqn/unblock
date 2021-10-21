@@ -59,7 +59,6 @@ impl<C> UnblockClient<C> {
             .then(|| parsed_response.ips())
             .into_iter()
             .flatten();
-
         blacklisted.chain(manual_ips).chain(manual_dns)
     }
 }
@@ -70,7 +69,11 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
         let dns_response = self.client.send(query).await?;
         let parsed_response = dns_response.parse()?;
         let blocked = self.get_blocked(&parsed_response);
-        let unblocked = self.unblocker.unblock(blocked).await?;
+        let domains = parsed_response
+            .domains()
+            .reduce(|acc, x| acc + "/" + &x)
+            .unwrap_or_else(|| "empty".to_owned());
+        let unblocked = self.unblocker.unblock(blocked, &domains).await?;
         if let UnblockResponse::Unblocked(_) = unblocked {
             for domain in parsed_response.domains() {
                 info!("domain {} unblocked", domain);
