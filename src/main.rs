@@ -119,7 +119,7 @@ fn create_unblock_if_needed(
                 DomainsFilter::new(
                     &config
                         .manual_whitelist_dns
-                        .and_then(|x| x.into_iter().reduce(|acc, e| acc + "\n" + &e))
+                        .map(|x| x.join("\n"))
                         .unwrap_or_default(),
                 )?,
                 config.manual_whitelist.unwrap_or_default(),
@@ -212,7 +212,7 @@ mod tests {
                 route_interface: "Ads".to_owned(),
                 manual_whitelist: Some(HashSet::new()),
                 clear_interval: Duration::from_secs(10),
-                manual_whitelist_dns: Some(HashSet::new()),
+                manual_whitelist_dns: Some(Vec::new()),
             }),
             ads_block: Some(AdsBlock {
                 filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"

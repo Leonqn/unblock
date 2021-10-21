@@ -52,7 +52,7 @@ pub struct Unblock {
     pub router_api_uri: String,
     pub route_interface: String,
     pub manual_whitelist: Option<HashSet<Ipv4Addr>>,
-    pub manual_whitelist_dns: Option<HashSet<String>>,
+    pub manual_whitelist_dns: Option<Vec<String>>,
     #[serde(with = "serde_humantime")]
     pub clear_interval: Duration,
 }
