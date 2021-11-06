@@ -1,7 +1,7 @@
 use super::DnsClient;
 use crate::{
-    domains_filter::DomainsFilter,
     dns::message::{Query, Response},
+    domains_filter::DomainsFilter,
     last_item::LastItem,
 };
 use anyhow::Result;
