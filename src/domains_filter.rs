@@ -1,7 +1,10 @@
-use std::time::Duration;
+use std::{
+    collections::{hash_map::DefaultHasher, HashMap},
+    hash::{Hash, Hasher},
+    time::Duration,
+};
 
 use crate::files_stream::create_files_stream;
-use aho_corasick::AhoCorasick;
 use anyhow::Result;
 use futures_util::stream::Stream;
 use log::{error, warn};
@@ -75,7 +78,7 @@ impl DomainsFilter {
 
 #[derive(Debug)]
 struct RulesMatcher {
-    rules_substr: AhoCorasick,
+    substrs: HashMap<u64, Vec<usize>>,
     rules: Vec<Rule>,
 }
 
@@ -88,25 +91,41 @@ impl RulesMatcher {
                     .split(|c| c != '_' && c != '-' && c != '.' && !char::is_alphanumeric(c))
                     .max_by_key(|x| x.len())
                     .unwrap_or("")
+                    .trim_matches('.')
             })
-            .collect::<Vec<_>>();
-        let rules_substr = AhoCorasick::new_auto_configured(&substrs);
-        Self {
-            rules_substr,
-            rules,
-        }
+            .enumerate()
+            .map(|(i, s)| (Self::hash(s), i))
+            .fold(HashMap::new(), |mut acc, (h, i)| {
+                acc.entry(h).or_insert_with(Vec::new).push(i);
+                acc
+            });
+        Self { substrs, rules }
+    }
+
+    fn hash(s: &str) -> u64 {
+        let mut h = DefaultHasher::new();
+        s.hash(&mut h);
+        h.finish()
     }
 
     fn match_domain(&self, domain: &str) -> Option<&Rule> {
-        self.rules_substr
-            .find_overlapping_iter(domain)
-            .find_map(move |match_res| {
-                let rule = &self.rules[match_res.pattern()];
-                if rule.is_match(domain) {
-                    Some(rule)
-                } else {
-                    None
-                }
+        (0..domain.len())
+            .flat_map(|i| {
+                (i + 1..=domain.len()).filter_map(move |j| {
+                    if (i == 0 || domain.as_bytes()[i] == b'.')
+                        && (j == domain.len() || domain.as_bytes()[j] == b'.')
+                    {
+                        Some(Self::hash(domain[i..j].trim_matches('.')))
+                    } else {
+                        None
+                    }
+                })
+            })
+            .find_map(|h| {
+                self.substrs.get(&h)?.iter().find_map(|idx| {
+                    let rule = &self.rules[*idx];
+                    rule.is_match(domain).then(|| rule)
+                })
             })
     }
 }
