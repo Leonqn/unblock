@@ -117,12 +117,12 @@ impl RulesMatcher {
             )
             .chain(std::iter::once(domain.len()))
             .collect::<Vec<_>>();
-        let dots_ref = &dots;
-        (0..dots.len())
-            .clone()
-            .flat_map(move |i| {
-                (i + 1..dots_ref.len())
-                    .map(move |j| Self::hash(domain[dots_ref[i]..dots_ref[j]].trim_matches('.')))
+        dots.iter()
+            .enumerate()
+            .flat_map(|(d_idx, &i)| {
+                dots[d_idx + 1..]
+                    .iter()
+                    .map(move |&j| Self::hash(domain[i..j].trim_matches('.')))
             })
             .find_map(|h| {
                 self.substrs.get(&h)?.iter().find_map(|idx| {
