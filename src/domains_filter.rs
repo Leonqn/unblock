@@ -109,17 +109,20 @@ impl RulesMatcher {
     }
 
     fn match_domain(&self, domain: &str) -> Option<&Rule> {
-        (0..domain.len())
-            .flat_map(|i| {
-                (i + 1..=domain.len()).filter_map(move |j| {
-                    if (i == 0 || domain.as_bytes()[i] == b'.')
-                        && (j == domain.len() || domain.as_bytes()[j] == b'.')
-                    {
-                        Some(Self::hash(domain[i..j].trim_matches('.')))
-                    } else {
-                        None
-                    }
-                })
+        let dots = std::iter::once(0)
+            .chain(
+                domain
+                    .char_indices()
+                    .filter_map(|(i, c)| (c == '.').then(|| i)),
+            )
+            .chain(std::iter::once(domain.len()))
+            .collect::<Vec<_>>();
+        let dots_ref = &dots;
+        (0..dots.len())
+            .clone()
+            .flat_map(move |i| {
+                (i + 1..dots_ref.len())
+                    .map(move |j| Self::hash(domain[dots_ref[i]..dots_ref[j]].trim_matches('.')))
             })
             .find_map(|h| {
                 self.substrs.get(&h)?.iter().find_map(|idx| {
