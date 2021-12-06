@@ -7,17 +7,13 @@ mod parsers;
 #[derive(Debug, Clone)]
 pub struct Query {
     request: Bytes,
-    header: Header,
 }
 
 impl Query {
     pub fn from_bytes(bytes: Bytes) -> Result<Self> {
         let header = Header::from_packet(&bytes)?;
         if matches!(header.flags.message_type, MessageType::Query) {
-            Ok(Self {
-                request: bytes,
-                header,
-            })
+            Ok(Self { request: bytes })
         } else {
             Err(anyhow!("Got dns response"))
         }
@@ -35,17 +31,13 @@ impl Query {
 #[derive(Debug, Clone)]
 pub struct Response {
     response: Bytes,
-    header: Header,
 }
 
 impl Response {
     pub fn from_bytes(bytes: Bytes) -> Result<Self> {
         let header = Header::from_packet(&bytes)?;
         if matches!(header.flags.message_type, MessageType::Response) {
-            Ok(Self {
-                response: bytes,
-                header,
-            })
+            Ok(Self { response: bytes })
         } else {
             Err(anyhow!("Got dns query"))
         }
