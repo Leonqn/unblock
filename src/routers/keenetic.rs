@@ -74,7 +74,7 @@ impl RouterClient for KeeneticClient {
             .into_iter()
             .flatten()
             .filter(|r| r.interface == self.vpn_interface)
-            .map(|r| r.host)
+            .filter_map(|r| r.host)
             .collect())
     }
 
@@ -108,6 +108,6 @@ impl Routes {
 
 #[derive(Deserialize)]
 struct Route {
-    host: Ipv4Addr,
+    host: Option<Ipv4Addr>,
     interface: String,
 }
