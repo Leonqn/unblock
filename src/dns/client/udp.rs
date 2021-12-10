@@ -87,7 +87,7 @@ async fn responses_handler(socket: UdpSocket, mut requests: UnboundedReceiver<Re
                     Some(response) = udp_stream.next() => {
                         let (_, response) = response?;
                         let response = Response::from_bytes(response)?;
-                        process_response(&mut waiting_requests, response).await;
+                        process_response(&mut waiting_requests, response);
 
                 }
             }
@@ -113,7 +113,7 @@ async fn process_request(
         Ok(message) => match waiting_requests.entry(RequestId::from_message(&message)) {
             Entry::Occupied(mut prev_request) => {
                 let err = Err(anyhow!(
-                    "Dublicate request id. Previous query: {:?}. Current query: {:?}",
+                    "Duplicate request id. Previous query: {:?}. Current query: {:?}",
                     prev_request.get().query.parse(),
                     message
                 ));
@@ -130,7 +130,7 @@ async fn process_request(
     }
 }
 
-async fn process_response(waiting_requests: &mut HashMap<RequestId, Request>, response: Response) {
+fn process_response(waiting_requests: &mut HashMap<RequestId, Request>, response: Response) {
     let message = response.parse();
     match message {
         Ok(message) => {
