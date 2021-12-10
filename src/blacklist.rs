@@ -23,6 +23,7 @@ fn parse_csv_dump(dump: &[u8]) -> HashSet<String> {
             iter.next()
         })
         .filter_map(|domains| std::str::from_utf8(domains).ok())
+        .filter(|x| !x.contains("http://"))
         .flat_map(|domains| {
             domains
                 .split('|')
