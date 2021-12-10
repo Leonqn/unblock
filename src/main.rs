@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         .map(|addr| tokio::spawn(start_metrics_server(addr)));
     let main_service = tokio::spawn(create_service(config).await?);
     tokio::select! {
-        metrics = metrics_service.unwrap(), if metrics_service.is_some() => {
+        metrics = async { metrics_service.unwrap().await }, if metrics_service.is_some() => {
             metrics
         }
         main_service = main_service => {

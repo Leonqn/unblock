@@ -102,7 +102,7 @@ async fn router_requests_handler(
             Some(ip) = rx_clear.recv() => {
                 unblocked.remove(&ip);
             }
-            _ = clear_tick.as_mut().unwrap().tick(), if clear_tick.is_some() && !unblocked.is_empty() => {
+            _ = async { clear_tick.as_mut().unwrap().tick().await }, if clear_tick.is_some() && !unblocked.is_empty() => {
                 let router_client = router_client.clone();
                 let unblocked = unblocked.clone();
                 let tx_clear = tx_clear.clone();
