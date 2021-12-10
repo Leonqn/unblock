@@ -17,7 +17,7 @@ pub struct UnblockClient<C> {
     unblocker: Unblocker,
     manual_dns_whitelist: DomainsFilter,
     manual_ip_whitelist: HashSet<Ipv4Addr>,
-    blacklist: LastItem<HashSet<Ipv4Addr>>,
+    blacklist: LastItem<HashSet<String>>,
 }
 
 impl<C> UnblockClient<C> {
@@ -26,7 +26,7 @@ impl<C> UnblockClient<C> {
         unblocker: Unblocker,
         manual_dns_whitelist: DomainsFilter,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
-        blacklist: impl Stream<Item = HashSet<Ipv4Addr>> + Send + 'static,
+        blacklist: impl Stream<Item = HashSet<String>> + Send + 'static,
     ) -> Self {
         let blacklist = LastItem::new(blacklist);
         Self {
@@ -44,10 +44,11 @@ impl<C> UnblockClient<C> {
     ) -> impl Iterator<Item = Ipv4Addr> + 'a {
         let blacklist = self.blacklist.item();
         let blacklisted = blacklist
-            .map(|blacklist| {
+            .and_then(|blacklist| {
                 parsed_response
-                    .ips()
-                    .filter(move |ip| blacklist.contains(ip))
+                    .domains()
+                    .any(move |domain| blacklist.contains(&domain))
+                    .then(|| parsed_response.ips())
             })
             .into_iter()
             .flatten();
