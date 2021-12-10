@@ -27,7 +27,7 @@ nom = "7"
 priority-queue = "1"
 async-trait = "0.1"
 config = { version="0.11", features=["yaml"] }
-serde-humantime = "0.1"
+humantime-serde = "1"
 warp = "0.3"
 regex = "1"
 arc-swap = "1"

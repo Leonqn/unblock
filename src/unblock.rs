@@ -24,7 +24,7 @@ pub struct Unblocker {
 }
 
 impl Unblocker {
-    pub fn new(router_client: impl RouterClient, clear_interval: Duration) -> Self {
+    pub fn new(router_client: impl RouterClient, clear_interval: Option<Duration>) -> Self {
         let (router_requests_tx, router_requests_rx) = unbounded_channel();
         let router_handler =
             router_requests_handler(router_client, clear_interval, router_requests_rx);
@@ -65,12 +65,13 @@ struct AddRoutesRequest {
 
 async fn router_requests_handler(
     router_client: impl RouterClient,
-    clear_interval: Duration,
+    clear_interval: Option<Duration>,
     mut requests: UnboundedReceiver<AddRoutesRequest>,
 ) {
     let router_client = Arc::new(router_client);
     let mut unblocked = load_routed(&*router_client).await;
-    let mut clear_tick = interval_at(Instant::now() + clear_interval, clear_interval);
+    let mut clear_tick = clear_interval.map(|x| interval_at(Instant::now() + x, x));
+
     let (tx_clear, mut rx_clear) = tokio::sync::mpsc::channel(30);
     loop {
         tokio::select! {
@@ -101,7 +102,7 @@ async fn router_requests_handler(
             Some(ip) = rx_clear.recv() => {
                 unblocked.remove(&ip);
             }
-            _ = clear_tick.tick(), if !unblocked.is_empty() => {
+            _ = clear_tick.as_mut().unwrap().tick(), if clear_tick.is_some() && !unblocked.is_empty() => {
                 let router_client = router_client.clone();
                 let unblocked = unblocked.clone();
                 let tx_clear = tx_clear.clone();
@@ -139,17 +140,23 @@ async fn clear_routes(
 }
 
 async fn load_routed(router_client: &impl RouterClient) -> HashSet<Ipv4Addr> {
-    loop {
-        match router_client.get_routed().await {
-            Ok(unblocked) => break unblocked,
-            Err(err) => {
-                error!(
-                    "Got error while receiving routed table from router: {:#}",
-                    err
-                );
-            }
+    use fure::backoff::fixed;
+    use fure::policies::{backoff, cond};
+    let policy = cond(backoff(fixed(Duration::from_secs(5))), |result| {
+        if let Some(Err(err)) = result {
+            error!(
+                "Got error while receiving routed table from router: {:#}",
+                err
+            );
+            true
+        } else {
+            false
         }
-    }
+    });
+
+    fure::retry(|| router_client.get_routed(), policy)
+        .await
+        .expect("Must be something")
 }
 
 #[cfg(test)]
@@ -237,7 +244,7 @@ mod tests {
     async fn should_add_routes_when_ips_are_not_unblocked() -> Result<()> {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
-        let unblocker = Unblocker::new(router_mock.clone(), Duration::from_secs(1));
+        let unblocker = Unblocker::new(router_mock.clone(), Some(Duration::from_secs(1)));
         tokio::task::yield_now().await;
 
         let response = unblocker.unblock(vec![blacklisted_ip], "").await?;
@@ -251,7 +258,7 @@ mod tests {
     async fn should_not_add_routes_when_ips_are_unblocked() -> Result<()> {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
-        let unblocker = Unblocker::new(router_mock.clone(), Duration::from_secs(1));
+        let unblocker = Unblocker::new(router_mock.clone(), Some(Duration::from_secs(1)));
         tokio::task::yield_now().await;
         unblocker.unblock(vec![blacklisted_ip], "").await?;
 
@@ -268,7 +275,7 @@ mod tests {
         let router_mock = RouterMock::new();
         let unblocker = Arc::new(Unblocker::new(
             router_mock.clone(),
-            Duration::from_millis(1),
+            Some(Duration::from_millis(1)),
         ));
         tokio::task::yield_now().await;
 
@@ -283,7 +290,10 @@ mod tests {
     async fn should_not_add_same_router_in_parallel() -> Result<()> {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
-        let unblocker = Arc::new(Unblocker::new(router_mock.clone(), Duration::from_secs(1)));
+        let unblocker = Arc::new(Unblocker::new(
+            router_mock.clone(),
+            Some(Duration::from_secs(1)),
+        ));
         tokio::task::yield_now().await;
         let hunger = router_mock.hung_add_routes();
 

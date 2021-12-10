@@ -29,9 +29,18 @@ async fn main() -> Result<()> {
     env_logger::init();
     let config = Config::init()?;
     info!("Starting service");
-    let metrics_service = create_metrics_server(config.metrics_bind_addr);
-    let main_service = create_service(config).await?;
-    tokio::join!(main_service, metrics_service);
+    let metrics_service = config
+        .metrics_bind_addr
+        .map(|addr| tokio::spawn(start_metrics_server(addr)));
+    let main_service = tokio::spawn(create_service(config).await?);
+    tokio::select! {
+        metrics = metrics_service.unwrap(), if metrics_service.is_some() => {
+            metrics
+        }
+        main_service = main_service => {
+            main_service
+        }
+    }?;
     Ok(())
 }
 
@@ -65,15 +74,18 @@ async fn create_dns_client(
     udp_upstream: SocketAddr,
     ads_block: Option<AdsBlock>,
     unblock: Option<Unblock>,
-    retry_config: Retry,
+    retry_config: Option<Retry>,
 ) -> Result<impl DnsClient> {
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
-    let retry_client = RetryClient::new(
-        doh,
-        retry_config.attempts_count,
-        retry_config.next_attempt_delay,
-    );
+    let retry_client = match retry_config {
+        Some(retry) => Either::Left(RetryClient::new(
+            doh,
+            retry.attempts_count,
+            retry.next_attempt_delay,
+        )),
+        None => Either::Right(doh),
+    };
     let unblock_client = create_unblock_if_needed(retry_client, unblock)?;
     let cached_client = CachedClient::new(unblock_client);
     let ads_block_client = create_ads_block_if_needed(cached_client, ads_block)?;
@@ -158,7 +170,7 @@ fn create_doh_if_needed(
     }
 }
 
-async fn create_metrics_server(bind_addr: SocketAddr) {
+async fn start_metrics_server(bind_addr: SocketAddr) {
     warp::serve(warp::path("metrics").map(|| {
         let metric_families = prometheus::gather();
         let encoder = TextEncoder::new();
@@ -201,7 +213,7 @@ mod tests {
         let bind_addr = "0.0.0.0:3356".parse()?;
         let config = Config {
             bind_addr,
-            metrics_bind_addr: "0.0.0.0:3357".parse()?,
+            metrics_bind_addr: Some("0.0.0.0:3357".parse()?),
             udp_dns_upstream: "8.8.8.8:53".parse()?,
             unblock: Some(Unblock {
                 blacklist_dump_uri:
@@ -211,7 +223,7 @@ mod tests {
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),
                 manual_whitelist: Some(HashSet::new()),
-                clear_interval: Duration::from_secs(10),
+                clear_interval: Some(Duration::from_secs(10)),
                 manual_whitelist_dns: Some(Vec::new()),
             }),
             ads_block: Some(AdsBlock {
@@ -225,10 +237,10 @@ mod tests {
                 "https://dns.cloudflare.com/dns-query".to_owned(),
                 "https://dns.quad9.net/dns-query".to_owned(),
             ]),
-            retry: Retry {
+            retry: Some(Retry {
                 attempts_count: 3,
                 next_attempt_delay: Duration::from_millis(200),
-            },
+            }),
         };
         let server = create_service(config).await.map_err(|x| dbg!(x))?;
         tokio::spawn(server);
