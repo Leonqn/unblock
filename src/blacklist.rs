@@ -20,10 +20,13 @@ fn parse_csv_dump(dump: &[u8]) -> HashSet<String> {
         .filter_map(|line| {
             let mut iter = line.split(|b| *b == b';');
             iter.next()?;
+            let domain = iter.next()?;
             iter.next()
+                .and_then(|x| std::str::from_utf8(x).ok())
+                .map_or(true, |url| !url.contains("http://"))
+                .then(|| domain)
         })
         .filter_map(|domains| std::str::from_utf8(domains).ok())
-        .filter(|x| !x.contains("http://"))
         .flat_map(|domains| {
             domains
                 .split('|')
@@ -49,6 +52,8 @@ mod test {
 
         assert!(parsed_domains.contains("www.linkeddb.com"));
         assert!(parsed_domains.contains("www.linkedin.com"));
+        assert!(parsed_domains.contains("ousportasdasdas.live"));
+        assert!(!parsed_domains.contains("youtube.com"));
         Ok(())
     }
 }
