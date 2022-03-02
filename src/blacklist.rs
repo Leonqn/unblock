@@ -31,7 +31,8 @@ fn parse_csv_dump(dump: &[u8]) -> HashSet<String> {
             domains
                 .split('|')
                 .map(str::trim)
-                .filter(|ip| !ip.is_empty())
+                .filter(|domain| !domain.is_empty())
+                .map(|x| x.trim_start_matches("*."))
                 .map(|x| x.to_owned())
         })
         .collect()
@@ -53,6 +54,7 @@ mod test {
         assert!(parsed_domains.contains("www.linkeddb.com"));
         assert!(parsed_domains.contains("www.linkedin.com"));
         assert!(parsed_domains.contains("ousportasdasdas.live"));
+        assert!(parsed_domains.contains("tvrain.ru"));
         assert!(!parsed_domains.contains("youtube.com"));
         Ok(())
     }
