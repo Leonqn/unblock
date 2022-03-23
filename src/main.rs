@@ -21,9 +21,9 @@ mod dns;
 mod domains_filter;
 mod files_stream;
 mod last_item;
+mod prefix_tree;
 mod routers;
 mod unblock;
-mod prefix_tree;
 
 #[tokio::main]
 async fn main() -> Result<()> {
