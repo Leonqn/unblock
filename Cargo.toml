@@ -37,6 +37,8 @@ fure = "0.6"
 
 [dev-dependencies]
 pretty_assertions = "1"
+quickcheck = "1"
+quickcheck_macros = "1"
 
 [profile.dev]
 panic = "abort"

@@ -1,21 +1,21 @@
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::stream::Stream;
 use reqwest::Url;
 use tokio_stream::StreamExt;
 
-use crate::files_stream::create_files_stream;
+use crate::{files_stream::create_files_stream, prefix_tree::PrefixTree};
 
 pub fn blacklists(
     blacklist_url: Url,
     update_inverval: Duration,
-) -> Result<impl Stream<Item = HashSet<String>>> {
+) -> Result<impl Stream<Item = PrefixTree>> {
     Ok(create_files_stream(blacklist_url, update_inverval)?
         .map(|dump| parse_csv_dump(dump.as_ref())))
 }
 
-fn parse_csv_dump(dump: &[u8]) -> HashSet<String> {
+fn parse_csv_dump(dump: &[u8]) -> PrefixTree {
     dump.split(|b| *b == b'\n')
         .filter_map(|line| {
             let mut iter = line.split(|b| *b == b';');
@@ -32,10 +32,12 @@ fn parse_csv_dump(dump: &[u8]) -> HashSet<String> {
                 .split('|')
                 .map(str::trim)
                 .filter(|domain| !domain.is_empty())
-                .map(|x| x.trim_start_matches("*."))
                 .map(|x| x.to_owned())
         })
-        .collect()
+        .fold(PrefixTree::default(), |mut acc, x| {
+            acc.add(x);
+            acc
+        })
 }
 
 #[cfg(test)]
@@ -55,6 +57,7 @@ mod test {
         assert!(parsed_domains.contains("www.linkedin.com"));
         assert!(parsed_domains.contains("ousportasdasdas.live"));
         assert!(parsed_domains.contains("tvrain.ru"));
+        assert!(parsed_domains.contains("test.tvrain.ru"));
         assert!(!parsed_domains.contains("youtube.com"));
         Ok(())
     }

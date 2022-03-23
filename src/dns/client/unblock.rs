@@ -5,6 +5,7 @@ use crate::{
     dns::message::{Message, Query, Response},
     domains_filter::DomainsFilter,
     last_item::LastItem,
+    prefix_tree::PrefixTree,
     unblock::{UnblockResponse, Unblocker},
 };
 use anyhow::Result;
@@ -17,7 +18,7 @@ pub struct UnblockClient<C> {
     unblocker: Unblocker,
     manual_dns_whitelist: DomainsFilter,
     manual_ip_whitelist: HashSet<Ipv4Addr>,
-    blacklist: LastItem<HashSet<String>>,
+    blacklist: LastItem<PrefixTree>,
 }
 
 impl<C> UnblockClient<C> {
@@ -26,7 +27,7 @@ impl<C> UnblockClient<C> {
         unblocker: Unblocker,
         manual_dns_whitelist: DomainsFilter,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
-        blacklist: impl Stream<Item = HashSet<String>> + Send + 'static,
+        blacklist: impl Stream<Item = PrefixTree> + Send + 'static,
     ) -> Self {
         let blacklist = LastItem::new(blacklist);
         Self {

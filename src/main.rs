@@ -23,6 +23,7 @@ mod files_stream;
 mod last_item;
 mod routers;
 mod unblock;
+mod prefix_tree;
 
 #[tokio::main]
 async fn main() -> Result<()> {
