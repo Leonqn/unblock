@@ -26,7 +26,7 @@ bytes = "1"
 nom = "7"
 priority-queue = "1"
 async-trait = "0.1"
-config = { version="0.11", features=["yaml"] }
+config = { version="0.13", features=["yaml"] }
 humantime-serde = "1"
 warp = "0.3"
 regex = "1"

@@ -23,9 +23,10 @@ impl Config {
         let config_name = std::env::args()
             .nth(1)
             .expect("Config file should be specified as first argument");
-        let mut settings = config::Config::default();
-        settings.merge(config::File::with_name(&config_name))?;
-        Ok(settings.try_into::<Self>()?)
+        Ok(config::Config::builder()
+            .add_source(config::File::with_name(&config_name))
+            .build()?
+            .try_deserialize()?)
     }
 }
 
