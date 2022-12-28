@@ -47,7 +47,7 @@ pub struct AdsBlock {
 
 #[derive(Deserialize)]
 pub struct Unblock {
-    pub blacklist_dump_uri: String,
+    pub blacklist_dump_uri: Option<String>,
     #[serde(with = "humantime_serde")]
     pub blacklist_update_interval: Duration,
     pub router_api_uri: String,

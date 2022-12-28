@@ -1,13 +1,15 @@
 use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use crate::config::{AdsBlock, Config, Retry, Unblock};
-use anyhow::Result;
+use anyhow::{Error, Result};
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, Either, RetryClient,
     RoundRobinClient, UdpClient, UnblockClient,
 };
 use domains_filter::DomainsFilter;
+use futures_util::{stream, StreamExt};
 use log::info;
+use prefix_tree::PrefixTree;
 use prometheus::{Encoder, TextEncoder};
 use reqwest::Url;
 use routers::KeeneticClient;
@@ -121,10 +123,21 @@ fn create_unblock_if_needed(
         Some(config) => {
             let router_client =
                 KeeneticClient::new(config.router_api_uri.parse()?, config.route_interface);
-            let blacklists = blacklist::blacklists(
-                config.blacklist_dump_uri.parse()?,
-                config.blacklist_update_interval,
-            )?;
+
+            let blacklists = config
+                .blacklist_dump_uri
+                .map(|uri| {
+                    Ok::<_, Error>(
+                        blacklist::blacklists(uri.parse()?, config.blacklist_update_interval)?
+                            .boxed(),
+                    )
+                })
+                .transpose()?
+                .unwrap_or_else(|| {
+                    stream::iter([PrefixTree::default()])
+                        .chain(stream::pending())
+                        .boxed()
+                });
             let unblocker = Unblocker::new(router_client, config.clear_interval);
             Ok(Either::Left(UnblockClient::new(
                 client,
@@ -217,9 +230,10 @@ mod tests {
             metrics_bind_addr: Some("0.0.0.0:3357".parse()?),
             udp_dns_upstream: "8.8.8.8:53".parse()?,
             unblock: Some(Unblock {
-                blacklist_dump_uri:
+                blacklist_dump_uri: Some(
                     "https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv"
                         .to_owned(),
+                ),
                 blacklist_update_interval: Duration::from_secs(10),
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),
