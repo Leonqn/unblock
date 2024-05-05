@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 log = "0.4"
-env_logger = "0.11"
+env_logger = "0.9"
 reqwest = { version="0.12", default-features = false, features=["stream", "gzip", "rustls-tls", "http2"] }
 tokio = { version="1", features=[
     "macros",
