@@ -113,7 +113,7 @@ impl RulesMatcher {
             .chain(
                 domain
                     .char_indices()
-                    .filter_map(|(i, c)| (c == '.').then(|| i)),
+                    .filter_map(|(i, c)| (c == '.').then_some(i)),
             )
             .chain(std::iter::once(domain.len()))
             .collect::<Vec<_>>();
@@ -127,7 +127,7 @@ impl RulesMatcher {
             .find_map(|h| {
                 self.substrs.get(&h)?.iter().find_map(|idx| {
                     let rule = &self.rules[*idx];
-                    rule.is_match(domain).then(|| rule)
+                    rule.is_match(domain).then_some(rule)
                 })
             })
     }

@@ -24,7 +24,7 @@ fn parse_csv_dump(dump: &[u8]) -> PrefixTree {
             iter.next()
                 .and_then(|x| std::str::from_utf8(x).ok())
                 .map_or(true, |url| !url.contains("http://"))
-                .then(|| domain)
+                .then_some(domain)
         })
         .filter_map(|domains| std::str::from_utf8(domains).ok())
         .flat_map(|domains| {
