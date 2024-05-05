@@ -3,7 +3,7 @@ use std::{collections::HashSet, net::Ipv4Addr};
 use super::DnsClient;
 use crate::{
     dns::message::{Message, Query, Response},
-    domains_filter::DomainsFilter,
+    domains_filter::{DomainsFilter, MatchResult},
     last_item::LastItem,
     prefix_tree::PrefixTree,
     unblock::{UnblockResponse, Unblocker},
@@ -43,12 +43,17 @@ impl<C> UnblockClient<C> {
         &'a self,
         parsed_response: &'a Message<'a>,
     ) -> impl Iterator<Item = Ipv4Addr> + 'a {
+        let manual_dns_list = parsed_response
+            .domains()
+            .filter_map(|d| self.manual_dns_whitelist.match_domain(&d))
+            .collect::<Vec<_>>();
+
         let blacklist = self.blacklist.item();
         let blacklisted = blacklist
             .and_then(|blacklist| {
                 parsed_response
                     .domains()
-                    .any(move |domain| blacklist.contains(&domain))
+                    .any(move |domain| is_blacklisted(&domain, &blacklist, &manual_dns_list))
                     .then(|| parsed_response.ips())
             })
             .into_iter()
@@ -56,13 +61,7 @@ impl<C> UnblockClient<C> {
         let manual_ips = parsed_response
             .ips()
             .filter(move |ip| self.manual_ip_whitelist.contains(ip));
-        let manual_dns = parsed_response
-            .domains()
-            .any(|x| self.manual_dns_whitelist.match_domain(&x).is_some())
-            .then(|| parsed_response.ips())
-            .into_iter()
-            .flatten();
-        blacklisted.chain(manual_ips).chain(manual_dns)
+        blacklisted.chain(manual_ips)
     }
 }
 
@@ -85,4 +84,9 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
 
         Ok(dns_response)
     }
+}
+
+fn is_blacklisted(domain: &str, blacklist: &PrefixTree, filter: &[MatchResult]) -> bool {
+    filter.iter().any(|m| !m.is_allowed)
+        || (blacklist.contains(domain) && filter.iter().all(|m| !m.is_allowed))
 }
