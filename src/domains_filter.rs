@@ -95,8 +95,8 @@ impl RulesMatcher {
             })
             .enumerate()
             .map(|(i, s)| (Self::hash(s), i))
-            .fold(HashMap::new(), |mut acc, (h, i)| {
-                acc.entry(h).or_insert_with(Vec::new).push(i);
+            .fold(HashMap::<_, Vec<_>>::new(), |mut acc, (h, i)| {
+                acc.entry(h).or_default().push(i);
                 acc
             });
         Self { substrs, rules }

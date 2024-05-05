@@ -1,4 +1,10 @@
-use std::{borrow::Borrow, cmp::Ordering, fmt::Debug, hash::Hash, time::Duration, time::Instant};
+use std::{
+    borrow::Borrow,
+    cmp::{Ordering, Reverse},
+    fmt::Debug,
+    hash::Hash,
+    time::{Duration, Instant},
+};
 
 use priority_queue::PriorityQueue;
 
@@ -20,7 +26,7 @@ pub struct Cache<K, V, GT = CurrentTime>
 where
     K: Hash + Eq,
 {
-    cache: PriorityQueue<K, ExpiresAt<V>>,
+    cache: PriorityQueue<K, Reverse<ExpiresAt<V>>>,
     time: GT,
 }
 
@@ -45,10 +51,10 @@ where
     pub fn insert(&mut self, k: K, v: V, ttl: Duration) {
         self.cache.push(
             k,
-            ExpiresAt {
+            Reverse(ExpiresAt {
                 expires_at: self.time.get_time() + ttl,
                 value: v,
-            },
+            }),
         );
     }
 
@@ -58,7 +64,7 @@ where
         while self
             .cache
             .peek()
-            .filter(|(_, v)| v.expires_at < current_time && remove_count != removed)
+            .filter(|(_, Reverse(v))| v.expires_at < current_time && remove_count != removed)
             .is_some()
         {
             removed += 1;
@@ -74,8 +80,8 @@ where
     {
         self.cache
             .get_priority(k)
-            .filter(|v| v.expires_at > self.time.get_time())
-            .map(|v| &v.value)
+            .filter(|Reverse(v)| v.expires_at > self.time.get_time())
+            .map(|Reverse(v)| &v.value)
     }
 }
 
@@ -87,13 +93,13 @@ struct ExpiresAt<T> {
 
 impl<T> Ord for ExpiresAt<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        other.expires_at.cmp(&self.expires_at)
+        self.expires_at.cmp(&other.expires_at)
     }
 }
 
 impl<T> PartialOrd for ExpiresAt<T> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        other.expires_at.partial_cmp(&self.expires_at)
+        Some(self.cmp(other))
     }
 }
 
