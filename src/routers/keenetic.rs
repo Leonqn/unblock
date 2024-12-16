@@ -44,7 +44,7 @@ impl KeeneticClient {
     async fn send_rci(&self, request_body: String) -> Result<()> {
         let response = self
             .http
-            .post(self.base_url.join("/rci")?)
+            .post(self.base_url.join("/rci/")?)
             .body(Body::from(request_body))
             .send()
             .await?;

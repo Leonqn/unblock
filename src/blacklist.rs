@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{io::Read, time::Duration};
 
 use anyhow::Result;
 use futures_util::stream::Stream;
@@ -12,7 +12,21 @@ pub fn blacklists(
     update_inverval: Duration,
 ) -> Result<impl Stream<Item = PrefixTree>> {
     Ok(create_files_stream(blacklist_url, update_inverval)?
+        .filter_map(|dump| match unzip_body(dump.as_ref()) {
+            Ok(dump) => Some(dump),
+            Err(err) => {
+                log::error!("Error occured while unzipping blacklist: {:#}", err);
+                None
+            }
+        })
         .map(|dump| parse_csv_dump(dump.as_ref())))
+}
+
+fn unzip_body(body: &[u8]) -> Result<Vec<u8>> {
+    let mut decoder = flate2::read::GzDecoder::new(body);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed)?;
+    Ok(decompressed)
 }
 
 fn parse_csv_dump(dump: &[u8]) -> PrefixTree {
