@@ -1,0 +1,16 @@
+{
+  "h": {
+    "id": "test",
+    "s": 100,
+    "u": 1700000000,
+    "ut": 1700000000
+  },
+  "list": [
+    {"d": "blocked.example.org", "ip4": ["192.0.2.1"]},
+    {"d": "www.blocked.example.com", "ip4": ["192.0.2.2"]},
+    {"d": "something.test", "rc": "NXDOMAIN"},
+    {"d": "wildcard.example.net"},
+    {"d": "sub.wildcard.example.net"},
+    {"d": "another.example.org", "ip4": ["192.0.2.3"]}
+  ]
+}
