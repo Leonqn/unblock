@@ -6,7 +6,8 @@ doh_upstreams:
   - https://dns.cloudflare.com/dns-query
   - https://dns.quad9.net/dns-query
 unblock:
- blacklist_dump_uri: https://raw.githubusercontent.com/zapret-info/z-i/master/dump.csv
+ rvzdata_url: https://raw.githubusercontent.com/fz139/blocked-domains-resolves/refs/heads/main/rvzdata.json
+ inside_raw_url: https://raw.githubusercontent.com/itdoginfo/allow-domains/main/Russia/inside-raw.lst
  blacklist_update_interval: 60 minutes
  router_api_uri: http://192.168.1.1:79
  route_interface: OpenVPN1

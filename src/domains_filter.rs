@@ -65,7 +65,7 @@ impl DomainsFilter {
         })
     }
 
-    pub fn match_domain(&self, domain: &str) -> Option<MatchResult> {
+    pub fn match_domain(&self, domain: &str) -> Option<MatchResult<'_>> {
         self.allow_matcher
             .match_domain(domain)
             .or_else(|| self.block_matcher.match_domain(domain))

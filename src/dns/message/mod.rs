@@ -19,7 +19,7 @@ impl Query {
         }
     }
 
-    pub fn parse(&self) -> Result<Message> {
+    pub fn parse(&self) -> Result<Message<'_>> {
         Message::from_packet(self.bytes())
     }
 
@@ -43,7 +43,7 @@ impl Response {
         }
     }
 
-    pub fn parse(&self) -> Result<Message> {
+    pub fn parse(&self) -> Result<Message<'_>> {
         Message::from_packet(self.bytes())
     }
 
@@ -62,7 +62,7 @@ pub struct Message<'a> {
 }
 
 impl<'m> Message<'m> {
-    fn from_packet(packet: &[u8]) -> Result<Message> {
+    fn from_packet(packet: &[u8]) -> Result<Message<'_>> {
         match parsers::parse_message(packet) {
             Ok((_, msg)) => Ok(msg),
             Err(err) => Err(anyhow!(

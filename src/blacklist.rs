@@ -18,7 +18,7 @@ struct BlacklistEntry {
     d: String,
 }
 
-pub fn blacklists(
+pub fn rvzdata(
     blacklist_url: Url,
     update_inverval: Duration,
 ) -> Result<impl Stream<Item = PrefixTree>> {
@@ -37,6 +37,32 @@ fn parse_json_dump(dump: &[u8]) -> Result<PrefixTree> {
     let mut tree = PrefixTree::default();
     for entry in blacklist.list {
         tree.add(entry.d);
+    }
+    Ok(tree)
+}
+
+pub fn inside_raw(
+    blacklist_url: Url,
+    update_interval: Duration,
+) -> Result<impl Stream<Item = PrefixTree>> {
+    Ok(create_files_stream(blacklist_url, update_interval)?
+        .filter_map(|dump| match parse_text_dump(&dump) {
+            Ok(tree) => Some(tree),
+            Err(err) => {
+                log::error!("Error occured while parsing text blacklist: {:#}", err);
+                None
+            }
+        }))
+}
+
+fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
+    let text = std::str::from_utf8(dump)?;
+    let mut tree = PrefixTree::default();
+    for line in text.lines() {
+        let domain = line.trim().trim_start_matches('.');
+        if !domain.is_empty() {
+            tree.add(domain.to_owned());
+        }
     }
     Ok(tree)
 }

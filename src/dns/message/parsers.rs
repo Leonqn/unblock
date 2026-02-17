@@ -14,7 +14,7 @@ use nom::{
 
 use super::{Flags, Header, Message, MessageType, Question, ResourceRecord};
 
-pub fn parse_message(packet: &[u8]) -> IResult<&[u8], Message> {
+pub fn parse_message(packet: &[u8]) -> IResult<&[u8], Message<'_>> {
     let parse_resource_records = |count| move |i| parse_resource_records(count, packet, i);
 
     let parse_body = |header: Header| {

@@ -1,7 +1,7 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, pin::Pin, sync::Arc};
 
 use crate::config::{AdsBlock, Config, Retry, Unblock};
-use anyhow::{Error, Result};
+use anyhow::Result;
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, Either, RetryClient,
     RoundRobinClient, UdpClient, UnblockClient,
@@ -124,20 +124,25 @@ fn create_unblock_if_needed(
             let router_client =
                 KeeneticClient::new(config.router_api_uri.parse()?, config.route_interface);
 
-            let blacklists = config
-                .blacklist_dump_uri
-                .map(|uri| {
-                    Ok::<_, Error>(
-                        blacklist::blacklists(uri.parse()?, config.blacklist_update_interval)?
-                            .boxed(),
-                    )
-                })
-                .transpose()?
-                .unwrap_or_else(|| {
+            let mut blacklist_streams: Vec<Pin<Box<dyn futures_util::Stream<Item = PrefixTree> + Send>>> = Vec::new();
+            if let Some(url) = config.rvzdata_url {
+                blacklist_streams.push(
+                    blacklist::rvzdata(url.parse()?, config.blacklist_update_interval)?.boxed(),
+                );
+            }
+            if let Some(url) = config.inside_raw_url {
+                blacklist_streams.push(
+                    blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?
+                        .boxed(),
+                );
+            }
+            if blacklist_streams.is_empty() {
+                blacklist_streams.push(
                     stream::iter([PrefixTree::default()])
                         .chain(stream::pending())
-                        .boxed()
-                });
+                        .boxed(),
+                );
+            }
             let unblocker = Unblocker::new(router_client, config.clear_interval);
             Ok(Either::Left(UnblockClient::new(
                 client,
@@ -149,7 +154,7 @@ fn create_unblock_if_needed(
                         .unwrap_or_default(),
                 )?,
                 config.manual_whitelist.unwrap_or_default(),
-                blacklists,
+                blacklist_streams,
             )))
         }
         None => Ok(Either::Right(client)),
@@ -230,10 +235,11 @@ mod tests {
             metrics_bind_addr: Some("0.0.0.0:3357".parse()?),
             udp_dns_upstream: "8.8.8.8:53".parse()?,
             unblock: Some(Unblock {
-                blacklist_dump_uri: Some(
+                rvzdata_url: Some(
                     "https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv"
                         .to_owned(),
                 ),
+                inside_raw_url: None,
                 blacklist_update_interval: Duration::from_secs(10),
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),

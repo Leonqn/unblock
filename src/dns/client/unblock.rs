@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr};
+use std::{collections::HashSet, net::Ipv4Addr, pin::Pin};
 
 use super::DnsClient;
 use crate::{
@@ -18,7 +18,7 @@ pub struct UnblockClient<C> {
     unblocker: Unblocker,
     manual_dns_whitelist: DomainsFilter,
     manual_ip_whitelist: HashSet<Ipv4Addr>,
-    blacklist: LastItem<PrefixTree>,
+    blacklists: Vec<LastItem<PrefixTree>>,
 }
 
 impl<C> UnblockClient<C> {
@@ -27,15 +27,15 @@ impl<C> UnblockClient<C> {
         unblocker: Unblocker,
         manual_dns_whitelist: DomainsFilter,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
-        blacklist: impl Stream<Item = PrefixTree> + Send + 'static,
+        blacklists: Vec<Pin<Box<dyn Stream<Item = PrefixTree> + Send>>>,
     ) -> Self {
-        let blacklist = LastItem::new(blacklist);
+        let blacklists = blacklists.into_iter().map(LastItem::new).collect();
         Self {
             client,
             unblocker,
             manual_dns_whitelist,
             manual_ip_whitelist,
-            blacklist,
+            blacklists,
         }
     }
 
@@ -48,14 +48,10 @@ impl<C> UnblockClient<C> {
             .filter_map(|d| self.manual_dns_whitelist.match_domain(&d))
             .collect::<Vec<_>>();
 
-        let blacklist = self.blacklist.item();
-        let blacklisted = blacklist
-            .and_then(|blacklist| {
-                parsed_response
-                    .domains()
-                    .any(move |domain| is_blacklisted(&domain, &blacklist, &manual_dns_list))
-                    .then(|| parsed_response.ips())
-            })
+        let blacklisted = parsed_response
+            .domains()
+            .any(|domain| is_blacklisted(&domain, &self.blacklists, &manual_dns_list))
+            .then(|| parsed_response.ips())
             .into_iter()
             .flatten();
         let manual_ips = parsed_response
@@ -86,7 +82,15 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
     }
 }
 
-fn is_blacklisted(domain: &str, blacklist: &PrefixTree, filter: &[MatchResult]) -> bool {
-    filter.iter().any(|m| !m.is_allowed)
-        || (blacklist.contains(domain) && filter.iter().all(|m| !m.is_allowed))
+fn is_blacklisted(
+    domain: &str,
+    blacklists: &[LastItem<PrefixTree>],
+    filter: &[MatchResult],
+) -> bool {
+    filter.iter().any(|m| m.is_allowed)
+        || (blacklists
+            .iter()
+            .filter_map(|b| b.item())
+            .any(|bl| bl.contains(domain))
+            && filter.iter().all(|m| !m.is_allowed))
 }
