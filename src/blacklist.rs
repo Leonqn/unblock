@@ -69,7 +69,7 @@ fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
 
 #[cfg(test)]
 mod test {
-    use super::parse_json_dump;
+    use super::{parse_json_dump, parse_text_dump};
     use anyhow::Result;
 
     #[test]
@@ -85,6 +85,22 @@ mod test {
         assert!(parsed_domains.contains("sub.wildcard.example.net"));
         assert!(parsed_domains.contains("another.example.org"));
         assert!(!parsed_domains.contains("notblocked.example.org"));
+        Ok(())
+    }
+
+    #[test]
+    fn text_parse_test() -> Result<()> {
+        let dump = include_bytes!("../test/inside-raw.lst");
+
+        let parsed_domains = parse_text_dump(dump)?;
+
+        assert!(parsed_domains.contains("blocked.fake.ua"));
+        assert!(parsed_domains.contains("blocked-site.example.org"));
+        assert!(parsed_domains.contains("test.fake.com"));
+        assert!(parsed_domains.contains("wildcard.fake.net"));
+        assert!(parsed_domains.contains("sub.wildcard.fake.net"));
+        assert!(parsed_domains.contains("another.fake.org"));
+        assert!(!parsed_domains.contains("notblocked.fake.org"));
         Ok(())
     }
 }
