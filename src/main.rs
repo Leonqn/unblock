@@ -124,7 +124,9 @@ fn create_unblock_if_needed(
             let router_client =
                 KeeneticClient::new(config.router_api_uri.parse()?, config.route_interface);
 
-            let mut blacklist_streams: Vec<Pin<Box<dyn futures_util::Stream<Item = PrefixTree> + Send>>> = Vec::new();
+            let mut blacklist_streams: Vec<
+                Pin<Box<dyn futures_util::Stream<Item = PrefixTree> + Send>>,
+            > = Vec::new();
             if let Some(url) = config.rvzdata_url {
                 blacklist_streams.push(
                     blacklist::rvzdata(url.parse()?, config.blacklist_update_interval)?.boxed(),
@@ -132,8 +134,7 @@ fn create_unblock_if_needed(
             }
             if let Some(url) = config.inside_raw_url {
                 blacklist_streams.push(
-                    blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?
-                        .boxed(),
+                    blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?.boxed(),
                 );
             }
             if blacklist_streams.is_empty() {

@@ -22,14 +22,17 @@ pub fn rvzdata(
     blacklist_url: Url,
     update_inverval: Duration,
 ) -> Result<impl Stream<Item = PrefixTree>> {
-    Ok(create_files_stream(blacklist_url, update_inverval)?
-        .filter_map(|dump| match parse_json_dump(&dump) {
-            Ok(tree) => Some(tree),
-            Err(err) => {
-                log::error!("Error occured while parsing blacklist: {:#}", err);
-                None
-            }
-        }))
+    Ok(
+        create_files_stream(blacklist_url, update_inverval)?.filter_map(
+            |dump| match parse_json_dump(&dump) {
+                Ok(tree) => Some(tree),
+                Err(err) => {
+                    log::error!("Error occured while parsing blacklist: {:#}", err);
+                    None
+                }
+            },
+        ),
+    )
 }
 
 fn parse_json_dump(dump: &[u8]) -> Result<PrefixTree> {
@@ -45,14 +48,17 @@ pub fn inside_raw(
     blacklist_url: Url,
     update_interval: Duration,
 ) -> Result<impl Stream<Item = PrefixTree>> {
-    Ok(create_files_stream(blacklist_url, update_interval)?
-        .filter_map(|dump| match parse_text_dump(&dump) {
-            Ok(tree) => Some(tree),
-            Err(err) => {
-                log::error!("Error occured while parsing text blacklist: {:#}", err);
-                None
-            }
-        }))
+    Ok(
+        create_files_stream(blacklist_url, update_interval)?.filter_map(
+            |dump| match parse_text_dump(&dump) {
+                Ok(tree) => Some(tree),
+                Err(err) => {
+                    log::error!("Error occured while parsing text blacklist: {:#}", err);
+                    None
+                }
+            },
+        ),
+    )
 }
 
 fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
