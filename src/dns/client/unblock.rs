@@ -87,10 +87,14 @@ fn is_blacklisted(
     blacklists: &[LastItem<PrefixTree>],
     filter: &[MatchResult],
 ) -> bool {
-    filter.iter().any(|m| m.is_allowed)
-        || (blacklists
-            .iter()
-            .filter_map(|b| b.item())
-            .any(|bl| bl.contains(domain))
-            && filter.iter().all(|m| !m.is_allowed))
+    if filter.iter().any(|m| m.is_allowed) {
+        return true;
+    }
+    if filter.iter().any(|m| !m.is_allowed) {
+        return false;
+    }
+    blacklists
+        .iter()
+        .filter_map(|b| b.item())
+        .any(|bl| bl.contains(domain))
 }
