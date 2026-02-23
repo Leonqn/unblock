@@ -67,7 +67,7 @@ fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
     for line in text.lines() {
         let domain = line.trim().trim_start_matches('.');
         if !domain.is_empty() {
-            tree.add(domain.to_owned());
+            tree.add(format!("*.{domain}"));
         }
     }
     Ok(tree)
