@@ -13,6 +13,7 @@ pub struct Config {
     pub metrics_bind_addr: Option<SocketAddr>,
     pub udp_dns_upstream: SocketAddr,
     pub doh_upstreams: Option<Vec<String>>,
+    pub dns_routing: Option<Vec<DnsRoute>>,
     pub unblock: Option<Unblock>,
     pub ads_block: Option<AdsBlock>,
     pub retry: Option<Retry>,
@@ -28,6 +29,12 @@ impl Config {
             .build()?
             .try_deserialize()?)
     }
+}
+
+#[derive(Deserialize)]
+pub struct DnsRoute {
+    pub domains: Vec<String>,
+    pub doh_upstreams: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,5 +64,5 @@ pub struct Unblock {
     pub manual_whitelist_dns: Option<Vec<String>>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
-    pub clear_interval: Option<Duration>,
+    pub route_ttl: Option<Duration>,
 }

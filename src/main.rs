@@ -1,10 +1,10 @@
 use std::{collections::HashSet, net::SocketAddr, pin::Pin, sync::Arc};
 
-use crate::config::{AdsBlock, Config, Retry, Unblock};
+use crate::config::{AdsBlock, Config, DnsRoute, Retry, Unblock};
 use anyhow::Result;
 use dns::client::{
-    AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, Either, RetryClient,
-    RoundRobinClient, UdpClient, UnblockClient,
+    AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, DomainRoutingClient, Either,
+    RetryClient, RoundRobinClient, UdpClient, UnblockClient,
 };
 use domains_filter::DomainsFilter;
 use futures_util::{stream, StreamExt};
@@ -51,6 +51,7 @@ async fn create_service(config: Config) -> Result<impl std::future::Future<Outpu
     let dns_pipeline = Arc::new(
         create_dns_client(
             config.doh_upstreams,
+            config.dns_routing,
             config.udp_dns_upstream,
             config.ads_block,
             config.unblock,
@@ -74,6 +75,7 @@ async fn create_service(config: Config) -> Result<impl std::future::Future<Outpu
 
 async fn create_dns_client(
     doh_upstreams: Option<Vec<String>>,
+    dns_routing: Option<Vec<DnsRoute>>,
     udp_upstream: SocketAddr,
     ads_block: Option<AdsBlock>,
     unblock: Option<Unblock>,
@@ -81,13 +83,14 @@ async fn create_dns_client(
 ) -> Result<impl DnsClient> {
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
+    let domain_routed = create_domain_routing_if_needed(doh, dns_routing)?;
     let retry_client = match retry_config {
         Some(retry) => Either::Left(RetryClient::new(
-            doh,
+            domain_routed,
             retry.attempts_count,
             retry.next_attempt_delay,
         )),
-        None => Either::Right(doh),
+        None => Either::Right(domain_routed),
     };
     let unblock_client = create_unblock_if_needed(retry_client, unblock)?;
     let cached_client = CachedClient::new(unblock_client);
@@ -144,7 +147,7 @@ fn create_unblock_if_needed(
                         .boxed(),
                 );
             }
-            let unblocker = Unblocker::new(router_client, config.clear_interval);
+            let unblocker = Unblocker::new(router_client, config.route_ttl);
             Ok(Either::Left(UnblockClient::new(
                 client,
                 unblocker,
@@ -159,6 +162,37 @@ fn create_unblock_if_needed(
             )))
         }
         None => Ok(Either::Right(client)),
+    }
+}
+
+fn create_domain_routing_if_needed(
+    client: impl DnsClient,
+    dns_routing: Option<Vec<DnsRoute>>,
+) -> Result<impl DnsClient> {
+    match dns_routing {
+        Some(routes) if !routes.is_empty() => {
+            let routing_rules = routes
+                .into_iter()
+                .map(|route| {
+                    let clients = route
+                        .doh_upstreams
+                        .into_iter()
+                        .map(|u| Ok(Box::new(DohClient::new(u.parse()?)?) as Box<dyn DnsClient>))
+                        .collect::<Result<_>>()?;
+                    let rr = RoundRobinClient::new(clients);
+                    let mut tree = PrefixTree::default();
+                    for domain in route.domains {
+                        tree.add(domain);
+                    }
+                    Ok((tree, Box::new(rr) as Box<dyn DnsClient>))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Either::Left(DomainRoutingClient::new(
+                routing_rules,
+                client,
+            )))
+        }
+        _ => Ok(Either::Right(client)),
     }
 }
 
@@ -235,6 +269,7 @@ mod tests {
             bind_addr,
             metrics_bind_addr: Some("0.0.0.0:3357".parse()?),
             udp_dns_upstream: "8.8.8.8:53".parse()?,
+            dns_routing: None,
             unblock: Some(Unblock {
                 rvzdata_url: Some(
                     "https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv"
@@ -245,7 +280,7 @@ mod tests {
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),
                 manual_whitelist: Some(HashSet::new()),
-                clear_interval: Some(Duration::from_secs(10)),
+                route_ttl: Some(Duration::from_secs(10)),
                 manual_whitelist_dns: Some(Vec::new()),
             }),
             ads_block: Some(AdsBlock {

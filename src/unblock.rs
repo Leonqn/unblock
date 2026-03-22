@@ -1,16 +1,20 @@
-use std::{collections::HashSet, net::Ipv4Addr, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    net::Ipv4Addr,
+    time::Duration,
+};
 
 use crate::routers::RouterClient;
 
 use anyhow::Result;
-use log::error;
+use log::{error, info};
 use tokio::{
     sync::{
         mpsc::UnboundedSender,
-        mpsc::{unbounded_channel, Sender, UnboundedReceiver},
+        mpsc::{unbounded_channel, UnboundedReceiver},
         oneshot,
     },
-    time::{interval_at, Instant},
+    time::Instant,
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -24,10 +28,9 @@ pub struct Unblocker {
 }
 
 impl Unblocker {
-    pub fn new(router_client: impl RouterClient, clear_interval: Option<Duration>) -> Self {
+    pub fn new(router_client: impl RouterClient, route_ttl: Option<Duration>) -> Self {
         let (router_requests_tx, router_requests_rx) = unbounded_channel();
-        let router_handler =
-            router_requests_handler(router_client, clear_interval, router_requests_rx);
+        let router_handler = router_requests_handler(router_client, route_ttl, router_requests_rx);
         tokio::spawn(router_handler);
         Self {
             router_requests: router_requests_tx,
@@ -65,76 +68,63 @@ struct AddRoutesRequest {
 
 async fn router_requests_handler(
     router_client: impl RouterClient,
-    clear_interval: Option<Duration>,
+    route_ttl: Option<Duration>,
     mut requests: UnboundedReceiver<AddRoutesRequest>,
 ) {
-    let router_client = Arc::new(router_client);
-    let mut unblocked = load_routed(&*router_client).await;
-    let mut clear_tick = clear_interval.map(|x| interval_at(Instant::now() + x, x));
+    let loaded = load_routed(&router_client).await;
+    let now = Instant::now();
+    let mut unblocked: HashMap<Ipv4Addr, Instant> =
+        loaded.into_iter().map(|ip| (ip, now)).collect();
 
-    let (tx_clear, mut rx_clear) = tokio::sync::mpsc::channel(30);
-    loop {
-        tokio::select! {
-            Some(request) = requests.recv() => {
-                let blocked = request
-                    .ips
-                    .iter()
-                    .filter(|ip| !unblocked.contains(ip))
-                    .copied()
-                    .collect::<Vec<_>>();
-                if !blocked.is_empty() {
-                    let add_result = router_client.add_routes(&blocked, &request.comment).await;
-                    match add_result {
-                        Ok(_) => {
-                            unblocked.extend(request.ips.iter().copied());
-                            let _ = request
-                                .waiter
-                                .send(Ok(UnblockResponse::Unblocked(blocked)));
-                        }
-                        Err(err) => {
-                            let _ = request.waiter.send(Err(err));
-                        }
-                    }
-                } else {
-                    let _ = request.waiter.send(Ok(UnblockResponse::Skipped));
-                }
-            }
-            Some(ip) = rx_clear.recv() => {
-                unblocked.remove(&ip);
-            }
-            _ = async { clear_tick.as_mut().unwrap().tick().await }, if clear_tick.is_some() && !unblocked.is_empty() => {
-                let router_client = router_client.clone();
-                let unblocked = unblocked.clone();
-                let tx_clear = tx_clear.clone();
-                tokio::task::spawn(async move {
-                    clear_routes(router_client, unblocked, tx_clear).await;
-                });
+    while let Some(request) = requests.recv().await {
+        let now = Instant::now();
+        // Touch all requested IPs to refresh their TTL
+        for &ip in &request.ips {
+            if let Some(last_seen) = unblocked.get_mut(&ip) {
+                *last_seen = now;
             }
         }
-    }
-}
-
-async fn clear_routes(
-    router_client: Arc<impl RouterClient>,
-    unblocked: HashSet<Ipv4Addr>,
-    tx_clear: Sender<Ipv4Addr>,
-) {
-    if !unblocked.is_empty() {
-        for ip in unblocked.clone() {
-            let permit = tx_clear
-                .clone()
-                .reserve_owned()
-                .await
-                .expect("Must be not closed");
-            let router_client = router_client.clone();
-            tokio::spawn(async move {
-                if let Err(err) = router_client.remove_route(ip).await {
-                    error!("Error clearing: {:?}", err);
-                    permit.release();
-                } else {
-                    let _ = permit.send(ip);
+        let blocked = request
+            .ips
+            .iter()
+            .filter(|ip| !unblocked.contains_key(ip))
+            .copied()
+            .collect::<Vec<_>>();
+        if !blocked.is_empty() {
+            let add_result = router_client.add_routes(&blocked, &request.comment).await;
+            match add_result {
+                Ok(_) => {
+                    for &ip in &request.ips {
+                        unblocked.insert(ip, now);
+                    }
+                    let _ = request.waiter.send(Ok(UnblockResponse::Unblocked(blocked)));
                 }
-            });
+                Err(err) => {
+                    let _ = request.waiter.send(Err(err));
+                }
+            }
+        } else {
+            let _ = request.waiter.send(Ok(UnblockResponse::Skipped));
+        }
+        // Remove up to 5 expired routes on each request
+        if let Some(ttl) = route_ttl {
+            let expired: Vec<Ipv4Addr> = unblocked
+                .iter()
+                .filter(|(_, last_seen)| now.duration_since(**last_seen) > ttl)
+                .map(|(ip, _)| *ip)
+                .take(5)
+                .collect();
+            for ip in expired {
+                match router_client.remove_route(ip).await {
+                    Ok(_) => {
+                        unblocked.remove(&ip);
+                        info!("Removed expired route {}", ip);
+                    }
+                    Err(err) => {
+                        error!("Error removing expired route {}: {:?}", ip, err);
+                    }
+                }
+            }
         }
     }
 }
@@ -270,8 +260,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_remove_routes_after_specified_duration() -> Result<()> {
-        let blacklisted_ip = "64.233.162.103".parse().unwrap();
+    async fn should_remove_expired_routes_on_next_request() -> Result<()> {
+        let expired_ip: Ipv4Addr = "64.233.162.103".parse().unwrap();
+        let new_ip: Ipv4Addr = "64.233.162.104".parse().unwrap();
         let router_mock = RouterMock::new();
         let unblocker = Arc::new(Unblocker::new(
             router_mock.clone(),
@@ -279,8 +270,10 @@ mod tests {
         ));
         tokio::task::yield_now().await;
 
-        unblocker.unblock(vec![blacklisted_ip], "").await?;
+        unblocker.unblock(vec![expired_ip], "").await?;
         sleep(Duration::from_millis(10)).await;
+        // Next request triggers cleanup of expired routes
+        unblocker.unblock(vec![new_ip], "").await?;
 
         assert!(router_mock.remove_called.load(Ordering::Relaxed));
         Ok(())
