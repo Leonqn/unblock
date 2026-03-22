@@ -6,7 +6,7 @@ doh_upstreams:
   - https://dns.cloudflare.com/dns-query
   - https://dns.quad9.net/dns-query
 dns_routing:
-  - domains: ["ru", "xn--p1ai"]
+  - domains: ["*.ru", "*.xn--p1ai"]
     doh_upstreams:
       - https://common.dot.dns.yandex.net/dns-query
 unblock:

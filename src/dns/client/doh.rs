@@ -1,5 +1,6 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::{header::HeaderMap, header::HeaderValue, Client, Url};
 
 use crate::dns::message::{Query, Response};
@@ -13,18 +14,13 @@ pub struct DohClient {
 
 impl DohClient {
     pub fn new(server_url: Url) -> Result<Self> {
-        let mut headers = HeaderMap::with_capacity(2);
+        let mut headers = HeaderMap::with_capacity(1);
         headers.insert(
             "Accept",
             HeaderValue::from_static("application/dns-message"),
         );
-        headers.insert(
-            "Content-Type",
-            HeaderValue::from_static("application/dns-message"),
-        );
         let http_client = Client::builder()
             .use_rustls_tls()
-            .http2_prior_knowledge()
             .default_headers(headers)
             .build()?;
         Ok(Self {
@@ -37,12 +33,15 @@ impl DohClient {
 #[async_trait]
 impl DnsClient for DohClient {
     async fn send(&self, query: Query) -> Result<Response> {
+        let encoded = URL_SAFE_NO_PAD.encode(query.bytes().as_ref());
+        let mut url = self.server_url.clone();
+        url.query_pairs_mut().append_pair("dns", &encoded);
         let response = self
             .http_client
-            .post(self.server_url.clone())
-            .body(query.bytes().clone())
+            .get(url)
             .send()
             .await?
+            .error_for_status()?
             .bytes()
             .await?;
         Response::from_bytes(response)
