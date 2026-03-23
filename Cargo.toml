@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 log = "0.4"
-env_logger = "0.9"
+env_logger = "0.11"
 hyper = { version = "1", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
 hyper-rustls = { version = "0.27", features = ["http2"] }
@@ -31,10 +31,10 @@ serde = { version="1", features=["derive"] }
 futures-util = "0.3"
 base64 = "0.22"
 bytes = "1"
-nom = "7"
+nom = "8"
 priority-queue = "2"
 async-trait = "0.1"
-config = { version="0.14", features=["yaml"] }
+config = { version="0.15", features=["yaml"] }
 humantime-serde = "1"
 regex = "1"
 arc-swap = "1"
