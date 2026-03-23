@@ -99,11 +99,19 @@ async fn responses_handler(socket: UdpSocket, mut requests: UnboundedReceiver<Re
     }
 }
 
+const MAX_INFLIGHT_REQUESTS: usize = 512;
+
 async fn process_request(
     waiting_requests: &mut HashMap<RequestId, Request>,
     socket: &UdpSocket,
     request: Request,
 ) {
+    if waiting_requests.len() >= MAX_INFLIGHT_REQUESTS {
+        let _ = request
+            .waiter
+            .send(Err(anyhow!("Too many in-flight requests")));
+        return;
+    }
     let send_and_parse = async {
         let message = request.query.parse()?;
         socket.send(request.query.bytes()).await?;

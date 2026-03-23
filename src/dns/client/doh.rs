@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -22,6 +24,8 @@ impl DohClient {
         let http_client = Client::builder()
             .use_rustls_tls()
             .default_headers(headers)
+            .pool_max_idle_per_host(2)
+            .pool_idle_timeout(Duration::from_secs(30))
             .build()?;
         Ok(Self {
             http_client,

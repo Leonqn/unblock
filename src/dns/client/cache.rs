@@ -21,10 +21,10 @@ impl<C> CachedClient<C>
 where
     C: DnsClient,
 {
-    pub fn new(dns_client: C) -> Self {
+    pub fn new(dns_client: C, max_size: Option<usize>) -> Self {
         Self {
             inner_client: dns_client,
-            cache: RwLock::new(Cache::new()),
+            cache: RwLock::new(Cache::new().with_max_size(max_size)),
         }
     }
 
@@ -120,7 +120,7 @@ mod tests {
         let dns_mock = DnsMock {
             is_called: AtomicBool::new(false),
         };
-        let cached = CachedClient::new(dns_mock);
+        let cached = CachedClient::new(dns_mock, None);
         let request = Query::from_bytes(Bytes::from_static(include_bytes!(
             "../../../test/dns_packets/q_api.browser.yandex.com.bin"
         )))?;
@@ -136,7 +136,7 @@ mod tests {
         let dns_mock = DnsMock {
             is_called: AtomicBool::new(false),
         };
-        let cached = CachedClient::new(dns_mock);
+        let cached = CachedClient::new(dns_mock, None);
         let mut request_bytes =
             include_bytes!("../../../test/dns_packets/q_api.browser.yandex.com.bin").to_owned();
         request_bytes[0] = 5;

@@ -2,10 +2,10 @@ use std::{collections::HashSet, net::Ipv4Addr, pin::Pin};
 
 use super::DnsClient;
 use crate::{
+    blacklist::Blacklist,
     dns::message::{Message, Query, Response},
     domains_filter::{DomainsFilter, MatchResult},
     last_item::LastItem,
-    prefix_tree::PrefixTree,
     unblock::{UnblockResponse, Unblocker},
 };
 use anyhow::Result;
@@ -18,7 +18,7 @@ pub struct UnblockClient<C> {
     unblocker: Unblocker,
     manual_dns_whitelist: DomainsFilter,
     manual_ip_whitelist: HashSet<Ipv4Addr>,
-    blacklists: Vec<LastItem<PrefixTree>>,
+    blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
 }
 
 impl<C> UnblockClient<C> {
@@ -27,7 +27,7 @@ impl<C> UnblockClient<C> {
         unblocker: Unblocker,
         manual_dns_whitelist: DomainsFilter,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
-        blacklists: Vec<Pin<Box<dyn Stream<Item = PrefixTree> + Send>>>,
+        blacklists: Vec<Pin<Box<dyn Stream<Item = Box<dyn Blacklist>> + Send>>>,
     ) -> Self {
         let blacklists = blacklists.into_iter().map(LastItem::new).collect();
         Self {
@@ -84,7 +84,7 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
 
 fn is_blacklisted(
     domain: &str,
-    blacklists: &[LastItem<PrefixTree>],
+    blacklists: &[LastItem<Box<dyn Blacklist>>],
     filter: &[MatchResult],
 ) -> bool {
     if filter.iter().any(|m| m.is_allowed) {

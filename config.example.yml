@@ -27,3 +27,5 @@ ads_block:
 retry:
   attempts_count: 3
   next_attempt_delay: 200 millis
+# data_dir: /tmp/unblock  # directory for disk-based blacklists and filters (default: /tmp/unblock)
+# cache_max_size: 500      # max DNS cache entries (default: unlimited)

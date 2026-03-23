@@ -28,6 +28,7 @@ where
 {
     cache: PriorityQueue<K, Reverse<ExpiresAt<V>>>,
     time: GT,
+    max_size: Option<usize>,
 }
 
 impl<K: Hash + Eq, V> Cache<K, V, CurrentTime> {
@@ -45,10 +46,22 @@ where
         Self {
             cache: PriorityQueue::new(),
             time,
+            max_size: None,
         }
     }
 
+    pub fn with_max_size(mut self, max_size: Option<usize>) -> Self {
+        self.max_size = max_size;
+        self
+    }
+
     pub fn insert(&mut self, k: K, v: V, ttl: Duration) {
+        // Evict oldest entries if at capacity
+        if let Some(max) = self.max_size {
+            while self.cache.len() >= max {
+                self.cache.pop();
+            }
+        }
         self.cache.push(
             k,
             Reverse(ExpiresAt {

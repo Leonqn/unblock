@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr};
+use std::{collections::HashSet, net::Ipv4Addr, time::Duration};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -15,8 +15,13 @@ pub struct KeeneticClient {
 
 impl KeeneticClient {
     pub fn new(base_url: Url, vpn_interface: String) -> Self {
+        let http = Client::builder()
+            .pool_max_idle_per_host(1)
+            .pool_idle_timeout(Duration::from_secs(60))
+            .build()
+            .unwrap();
         Self {
-            http: Client::new(),
+            http,
             base_url,
             vpn_interface,
         }

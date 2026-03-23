@@ -112,7 +112,7 @@ async fn router_requests_handler(
                 .iter()
                 .filter(|(_, last_seen)| now.duration_since(**last_seen) > ttl)
                 .map(|(ip, _)| *ip)
-                .take(5)
+                .take(50)
                 .collect();
             for ip in expired {
                 match router_client.remove_route(ip).await {

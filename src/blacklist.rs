@@ -1,3 +1,5 @@
+use std::io::BufReader;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -6,7 +8,26 @@ use reqwest::Url;
 use serde::Deserialize;
 use tokio_stream::StreamExt;
 
-use crate::{files_stream::create_files_stream, prefix_tree::PrefixTree};
+use crate::disk_blacklist::{DiskBlacklist, DiskBlacklistBuilder};
+use crate::files_stream::{create_files_stream, create_files_stream_to_disk};
+use crate::prefix_tree::PrefixTree;
+
+/// Trait for domain blacklist lookups.
+pub trait Blacklist: Send + Sync {
+    fn contains(&self, domain: &str) -> bool;
+}
+
+impl Blacklist for PrefixTree {
+    fn contains(&self, domain: &str) -> bool {
+        PrefixTree::contains(self, domain)
+    }
+}
+
+impl Blacklist for DiskBlacklist {
+    fn contains(&self, domain: &str) -> bool {
+        DiskBlacklist::contains(self, domain)
+    }
+}
 
 #[derive(Deserialize)]
 struct BlacklistDump {
@@ -20,40 +41,52 @@ struct BlacklistEntry {
 
 pub fn rvzdata(
     blacklist_url: Url,
-    update_inverval: Duration,
-) -> Result<impl Stream<Item = PrefixTree>> {
+    update_interval: Duration,
+    data_dir: PathBuf,
+) -> Result<impl Stream<Item = Box<dyn Blacklist>>> {
+    let json_path = data_dir.join("rvzdata.json");
+    let bl_path = data_dir.join("rvzdata.bl");
     Ok(
-        create_files_stream(blacklist_url, update_inverval)?.filter_map(
-            |dump| match parse_json_dump(&dump) {
-                Ok(tree) => Some(tree),
-                Err(err) => {
-                    log::error!("Error occured while parsing blacklist: {:#}", err);
-                    None
+        create_files_stream_to_disk(blacklist_url, update_interval, json_path.clone())?.filter_map(
+            move |json_path| {
+                let bl_path = bl_path.clone();
+                match parse_json_dump_to_disk(&json_path, &bl_path) {
+                    Ok(bl) => Some(Box::new(bl) as Box<dyn Blacklist>),
+                    Err(err) => {
+                        log::error!("Error occurred while parsing blacklist: {:#}", err);
+                        None
+                    }
                 }
             },
         ),
     )
 }
 
-fn parse_json_dump(dump: &[u8]) -> Result<PrefixTree> {
-    let blacklist: BlacklistDump = serde_json::from_slice(dump)?;
-    let mut tree = PrefixTree::default();
-    for entry in blacklist.list {
-        tree.add(entry.d);
+/// Parse JSON dump from disk file, building a DiskBlacklist (sorted hash file).
+/// Uses typed deserialization from a buffered reader — avoids loading raw JSON bytes.
+/// Peak memory: ~40 MB (Vec of 1.3M domain strings), steady state: ~0 MB (mmap).
+fn parse_json_dump_to_disk(json_path: &PathBuf, bl_path: &PathBuf) -> Result<DiskBlacklist> {
+    let file = std::fs::File::open(json_path)?;
+    let reader = BufReader::new(file);
+    let dump: BlacklistDump = serde_json::from_reader(reader)?;
+
+    let mut builder = DiskBlacklistBuilder::new(bl_path.clone())?;
+    for entry in dump.list {
+        builder.add(&entry.d)?;
     }
-    Ok(tree)
+    builder.finish()
 }
 
 pub fn inside_raw(
     blacklist_url: Url,
     update_interval: Duration,
-) -> Result<impl Stream<Item = PrefixTree>> {
+) -> Result<impl Stream<Item = Box<dyn Blacklist>>> {
     Ok(
         create_files_stream(blacklist_url, update_interval)?.filter_map(
             |dump| match parse_text_dump(&dump) {
-                Ok(tree) => Some(tree),
+                Ok(tree) => Some(Box::new(tree) as Box<dyn Blacklist>),
                 Err(err) => {
-                    log::error!("Error occured while parsing text blacklist: {:#}", err);
+                    log::error!("Error occurred while parsing text blacklist: {:#}", err);
                     None
                 }
             },
@@ -75,22 +108,26 @@ fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
 
 #[cfg(test)]
 mod test {
-    use super::{parse_json_dump, parse_text_dump};
+    use super::*;
     use anyhow::Result;
 
     #[test]
-    fn json_parse_test() -> Result<()> {
-        let dump = include_bytes!("../test/dump.json");
+    fn json_parse_to_disk_test() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let json_path = dir.path().join("dump.json");
+        let bl_path = dir.path().join("dump.bl");
 
-        let parsed_domains = parse_json_dump(dump)?;
+        std::fs::copy("test/dump.json", &json_path)?;
 
-        assert!(parsed_domains.contains("blocked.example.org"));
-        assert!(parsed_domains.contains("www.blocked.example.com"));
-        assert!(parsed_domains.contains("something.test"));
-        assert!(parsed_domains.contains("wildcard.example.net"));
-        assert!(parsed_domains.contains("sub.wildcard.example.net"));
-        assert!(parsed_domains.contains("another.example.org"));
-        assert!(!parsed_domains.contains("notblocked.example.org"));
+        let bl = parse_json_dump_to_disk(&json_path, &bl_path)?;
+
+        assert!(bl.contains("blocked.example.org"));
+        assert!(bl.contains("www.blocked.example.com"));
+        assert!(bl.contains("something.test"));
+        assert!(bl.contains("wildcard.example.net"));
+        assert!(bl.contains("sub.wildcard.example.net"));
+        assert!(bl.contains("another.example.org"));
+        assert!(!bl.contains("notblocked.example.org"));
         Ok(())
     }
 

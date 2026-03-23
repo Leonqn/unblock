@@ -19,6 +19,7 @@ use warp::Filter;
 mod blacklist;
 mod cache;
 mod config;
+mod disk_blacklist;
 mod dns;
 mod domains_filter;
 mod files_stream;
@@ -48,6 +49,9 @@ async fn main() -> Result<()> {
 }
 
 async fn create_service(config: Config) -> Result<impl std::future::Future<Output = ()>> {
+    let data_dir = std::path::PathBuf::from(&config.data_dir);
+    std::fs::create_dir_all(&data_dir)?;
+
     let dns_pipeline = Arc::new(
         create_dns_client(
             config.doh_upstreams,
@@ -56,6 +60,8 @@ async fn create_service(config: Config) -> Result<impl std::future::Future<Outpu
             config.ads_block,
             config.unblock,
             config.retry,
+            data_dir,
+            config.cache_max_size,
         )
         .await?,
     );
@@ -80,6 +86,8 @@ async fn create_dns_client(
     ads_block: Option<AdsBlock>,
     unblock: Option<Unblock>,
     retry_config: Option<Retry>,
+    data_dir: std::path::PathBuf,
+    cache_max_size: Option<usize>,
 ) -> Result<impl DnsClient> {
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
@@ -92,15 +100,16 @@ async fn create_dns_client(
         )),
         None => Either::Right(domain_routed),
     };
-    let unblock_client = create_unblock_if_needed(retry_client, unblock)?;
-    let cached_client = CachedClient::new(unblock_client);
-    let ads_block_client = create_ads_block_if_needed(cached_client, ads_block)?;
+    let unblock_client = create_unblock_if_needed(retry_client, unblock, &data_dir)?;
+    let cached_client = CachedClient::new(unblock_client, cache_max_size);
+    let ads_block_client = create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
     Ok(ads_block_client)
 }
 
 fn create_ads_block_if_needed(
     client: impl DnsClient,
     config: Option<AdsBlock>,
+    data_dir: &std::path::Path,
 ) -> Result<impl DnsClient> {
     match config {
         Some(config) => {
@@ -108,6 +117,7 @@ fn create_ads_block_if_needed(
                 config.filter_uri.parse()?,
                 config.filter_update_interval,
                 config.manual_rules,
+                Some(data_dir.to_path_buf()),
             )?;
             Ok(Either::Left(AdsBlockClient::new(
                 client,
@@ -121,6 +131,7 @@ fn create_ads_block_if_needed(
 fn create_unblock_if_needed(
     client: impl DnsClient,
     config: Option<Unblock>,
+    data_dir: &std::path::Path,
 ) -> Result<impl DnsClient> {
     match config {
         Some(config) => {
@@ -128,11 +139,16 @@ fn create_unblock_if_needed(
                 KeeneticClient::new(config.router_api_uri.parse()?, config.route_interface);
 
             let mut blacklist_streams: Vec<
-                Pin<Box<dyn futures_util::Stream<Item = PrefixTree> + Send>>,
+                Pin<Box<dyn futures_util::Stream<Item = Box<dyn blacklist::Blacklist>> + Send>>,
             > = Vec::new();
             if let Some(url) = config.rvzdata_url {
                 blacklist_streams.push(
-                    blacklist::rvzdata(url.parse()?, config.blacklist_update_interval)?.boxed(),
+                    blacklist::rvzdata(
+                        url.parse()?,
+                        config.blacklist_update_interval,
+                        data_dir.to_path_buf(),
+                    )?
+                    .boxed(),
                 );
             }
             if let Some(url) = config.inside_raw_url {
@@ -141,11 +157,8 @@ fn create_unblock_if_needed(
                 );
             }
             if blacklist_streams.is_empty() {
-                blacklist_streams.push(
-                    stream::iter([PrefixTree::default()])
-                        .chain(stream::pending())
-                        .boxed(),
-                );
+                let empty: Box<dyn blacklist::Blacklist> = Box::new(PrefixTree::default());
+                blacklist_streams.push(stream::iter([empty]).chain(stream::pending()).boxed());
             }
             let unblocker = Unblocker::new(router_client, config.route_ttl);
             Ok(Either::Left(UnblockClient::new(
@@ -156,6 +169,7 @@ fn create_unblock_if_needed(
                         .manual_whitelist_dns
                         .map(|x| x.join("\n"))
                         .unwrap_or_default(),
+                    None,
                 )?,
                 config.manual_whitelist.unwrap_or_default(),
                 blacklist_streams,
@@ -298,6 +312,8 @@ mod tests {
                 attempts_count: 3,
                 next_attempt_delay: Duration::from_millis(200),
             }),
+            cache_max_size: None,
+            data_dir: "/tmp/unblock-test".to_owned(),
         };
         let server = create_service(config).await.map_err(|x| dbg!(x))?;
         tokio::spawn(server);

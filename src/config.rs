@@ -17,6 +17,9 @@ pub struct Config {
     pub unblock: Option<Unblock>,
     pub ads_block: Option<AdsBlock>,
     pub retry: Option<Retry>,
+    pub cache_max_size: Option<usize>,
+    #[serde(default = "default_data_dir")]
+    pub data_dir: String,
 }
 
 impl Config {
@@ -65,4 +68,8 @@ pub struct Unblock {
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub route_ttl: Option<Duration>,
+}
+
+fn default_data_dir() -> String {
+    "/tmp/unblock".to_owned()
 }
