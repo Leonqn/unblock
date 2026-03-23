@@ -9,8 +9,6 @@ use super::DnsClient;
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::{Bytes, BytesMut};
-use once_cell::sync::Lazy;
-use prometheus::{register_int_counter, IntCounter};
 
 pub struct CachedClient<C> {
     inner_client: C,
@@ -54,29 +52,12 @@ where
 {
     async fn send(&self, query: Query) -> Result<Response> {
         match self.get_from_cache(&query) {
-            Some(response) => {
-                METRICS.cache_hits.inc();
-                Ok(response)
-            }
+            Some(response) => Ok(response),
             None => {
                 let response = self.inner_client.send(query.clone()).await?;
                 self.insert_to_cache(&query, &response)?;
                 Ok(response)
             }
-        }
-    }
-}
-
-static METRICS: Lazy<Metrics> = Lazy::new(Metrics::new);
-
-struct Metrics {
-    cache_hits: IntCounter,
-}
-
-impl Metrics {
-    fn new() -> Self {
-        Self {
-            cache_hits: register_int_counter!("cache_hits", "cache_hits").unwrap(),
         }
     }
 }

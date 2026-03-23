@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, path::{Path, PathBuf}, sync::Arc};
 
 use crate::config::{AdsBlock, Config, DnsRoute, Retry, Unblock};
 use crate::web::AppState;
@@ -30,25 +30,25 @@ mod routers;
 mod unblock;
 mod web;
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     env_logger::init();
     let config = Config::init()?;
     info!("Starting service");
 
-    let data_dir = std::path::PathBuf::from(&config.data_dir);
+    let data_dir = PathBuf::from(&config.data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
-    let (dns_pipeline, app_state) = create_dns_client(
-        config.doh_upstreams,
-        config.dns_routing,
-        config.udp_dns_upstream,
-        config.ads_block,
-        config.unblock,
-        config.retry,
+    let (dns_pipeline, app_state) = create_dns_client(DnsClientConfig {
+        doh_upstreams: config.doh_upstreams,
+        dns_routing: config.dns_routing,
+        udp_upstream: config.udp_dns_upstream,
+        ads_block: config.ads_block,
+        unblock_config: config.unblock,
+        retry_config: config.retry,
         data_dir,
-        config.cache_max_size,
-    )
+        cache_max_size: config.cache_max_size,
+    })
     .await?;
 
     let dns_pipeline: Arc<dyn DnsClient> = Arc::new(dns_pipeline);
@@ -57,11 +57,13 @@ async fn main() -> Result<()> {
         blacklists: app_state.blacklists,
         routed_snapshot: app_state.routed_snapshot,
         dns_pipeline: dns_pipeline.clone(),
+        dns_routing: app_state.dns_routing,
+        default_upstreams: app_state.default_upstreams,
     });
 
     let web_bind_addr = config.web_bind_addr.or(config.metrics_bind_addr);
-    let web_service = web_bind_addr
-        .map(|addr| tokio::spawn(web::start_web_server(addr, app_state)));
+    let web_service =
+        web_bind_addr.map(|addr| tokio::spawn(web::start_web_server(addr, app_state)));
 
     let request_handler = move |query| {
         let dns_pipeline = dns_pipeline.clone();
@@ -86,22 +88,65 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-struct PartialAppState {
-    domains_filter: Option<LastItem<DomainsFilter>>,
+struct UnblockResult<C> {
+    client: C,
     blacklists: Vec<LastItem<Box<dyn blacklist::Blacklist>>>,
     routed_snapshot: Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
 }
 
-async fn create_dns_client(
+struct PartialAppState {
+    domains_filter: Option<LastItem<DomainsFilter>>,
+    blacklists: Vec<LastItem<Box<dyn blacklist::Blacklist>>>,
+    routed_snapshot: Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
+    dns_routing: Vec<(prefix_tree::PrefixTree, Vec<String>)>,
+    default_upstreams: Vec<String>,
+}
+
+struct DnsClientConfig {
     doh_upstreams: Option<Vec<String>>,
     dns_routing: Option<Vec<DnsRoute>>,
     udp_upstream: SocketAddr,
     ads_block: Option<AdsBlock>,
     unblock_config: Option<Unblock>,
     retry_config: Option<Retry>,
-    data_dir: std::path::PathBuf,
+    data_dir: PathBuf,
     cache_max_size: Option<usize>,
-) -> Result<(impl DnsClient, PartialAppState)> {
+}
+
+async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, PartialAppState)> {
+    let DnsClientConfig {
+        doh_upstreams,
+        dns_routing,
+        udp_upstream,
+        ads_block,
+        unblock_config,
+        retry_config,
+        data_dir,
+        cache_max_size,
+    } = cfg;
+    // Build routing info for AppState before consuming dns_routing
+    let default_upstreams = doh_upstreams
+        .as_deref()
+        .unwrap_or(&[])
+        .iter()
+        .map(|s| s.to_owned())
+        .collect::<Vec<_>>();
+    let web_dns_routing: Vec<(PrefixTree, Vec<String>)> = dns_routing
+        .as_ref()
+        .map(|routes| {
+            routes
+                .iter()
+                .map(|route| {
+                    let mut tree = PrefixTree::default();
+                    for domain in &route.domains {
+                        tree.add(domain.clone());
+                    }
+                    (tree, route.doh_upstreams.clone())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
     let domain_routed = create_domain_routing_if_needed(doh, dns_routing)?;
@@ -114,7 +159,7 @@ async fn create_dns_client(
         None => Either::Right(domain_routed),
     };
 
-    let (unblock_client, blacklists, routed_snapshot) =
+    let UnblockResult { client: unblock_client, blacklists, routed_snapshot } =
         create_unblock_if_needed(retry_client, unblock_config, &data_dir)?;
     let cached_client = CachedClient::new(unblock_client, cache_max_size);
     let (ads_block_client, domains_filter) =
@@ -124,6 +169,8 @@ async fn create_dns_client(
         domains_filter,
         blacklists,
         routed_snapshot,
+        dns_routing: web_dns_routing,
+        default_upstreams,
     };
     Ok((ads_block_client, state))
 }
@@ -131,7 +178,7 @@ async fn create_dns_client(
 fn create_ads_block_if_needed(
     client: impl DnsClient,
     config: Option<AdsBlock>,
-    data_dir: &std::path::Path,
+    data_dir: &Path,
 ) -> Result<(impl DnsClient, Option<LastItem<DomainsFilter>>)> {
     match config {
         Some(config) => {
@@ -152,12 +199,8 @@ fn create_ads_block_if_needed(
 fn create_unblock_if_needed(
     client: impl DnsClient,
     config: Option<Unblock>,
-    data_dir: &std::path::Path,
-) -> Result<(
-    impl DnsClient,
-    Vec<LastItem<Box<dyn blacklist::Blacklist>>>,
-    Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
-)> {
+    data_dir: &Path,
+) -> Result<UnblockResult<impl DnsClient>> {
     match config {
         Some(config) => {
             let router_client =
@@ -175,8 +218,7 @@ fn create_unblock_if_needed(
                 blacklist_last_items.push(last_item);
             }
             if let Some(url) = config.inside_raw_url {
-                let stream =
-                    blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?;
+                let stream = blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?;
                 let last_item = LastItem::new(stream);
                 blacklist_last_items.push(last_item);
             }
@@ -190,7 +232,7 @@ fn create_unblock_if_needed(
             let routed_snapshot = unblocker.routed_snapshot();
 
             let blacklists_for_client: Vec<LastItem<Box<dyn blacklist::Blacklist>>> =
-                blacklist_last_items.iter().cloned().collect();
+                blacklist_last_items.to_vec();
 
             let unblock_client = UnblockClient::new(
                 client,
@@ -205,17 +247,17 @@ fn create_unblock_if_needed(
                 config.manual_whitelist.unwrap_or_default(),
                 blacklists_for_client,
             );
-            Ok((
-                Either::Left(unblock_client),
-                blacklist_last_items,
+            Ok(UnblockResult {
+                client: Either::Left(unblock_client),
+                blacklists: blacklist_last_items,
                 routed_snapshot,
-            ))
+            })
         }
-        None => Ok((
-            Either::Right(client),
-            vec![],
-            Arc::new(ArcSwapOption::empty()),
-        )),
+        None => Ok(UnblockResult {
+            client: Either::Right(client),
+            blacklists: vec![],
+            routed_snapshot: Arc::new(ArcSwapOption::empty()),
+        }),
     }
 }
 
@@ -306,23 +348,23 @@ mod tests {
         tokio::spawn(router_http_stub());
         tokio::task::yield_now().await;
         let bind_addr = "0.0.0.0:3356".parse()?;
-        let data_dir = std::path::PathBuf::from("/tmp/unblock-test");
+        let data_dir = PathBuf::from("/tmp/unblock-test");
         std::fs::create_dir_all(&data_dir)?;
-        let (dns_pipeline, _state) = create_dns_client(
-            Some(vec![
+        let (dns_pipeline, _state) = create_dns_client(DnsClientConfig {
+            doh_upstreams: Some(vec![
                 "https://dns.google/dns-query".to_owned(),
                 "https://dns.cloudflare.com/dns-query".to_owned(),
                 "https://dns.quad9.net/dns-query".to_owned(),
             ]),
-            None,
-            "8.8.8.8:53".parse()?,
-            Some(AdsBlock {
+            dns_routing: None,
+            udp_upstream: "8.8.8.8:53".parse()?,
+            ads_block: Some(AdsBlock {
                 filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
                     .to_owned(),
                 filter_update_interval: Duration::from_secs(10),
                 manual_rules: vec!["@||youtube.com".to_owned()],
             }),
-            Some(Unblock {
+            unblock_config: Some(Unblock {
                 rvzdata_url: Some(
                     "https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv"
                         .to_owned(),
@@ -335,13 +377,13 @@ mod tests {
                 route_ttl: Some(Duration::from_secs(10)),
                 manual_whitelist_dns: Some(Vec::new()),
             }),
-            Some(Retry {
+            retry_config: Some(Retry {
                 attempts_count: 3,
                 next_attempt_delay: Duration::from_millis(200),
             }),
             data_dir,
-            None,
-        )
+            cache_max_size: None,
+        })
         .await?;
 
         let dns_pipeline = std::sync::Arc::new(dns_pipeline);
@@ -351,8 +393,7 @@ mod tests {
         };
         let udp_server =
             crate::dns::server::create_udp_server(bind_addr, request_handler.clone()).await?;
-        let tcp_server =
-            crate::dns::server::create_tcp_server(bind_addr, request_handler).await?;
+        let tcp_server = crate::dns::server::create_tcp_server(bind_addr, request_handler).await?;
         tokio::spawn(async move {
             tokio::join!(udp_server, tcp_server);
         });

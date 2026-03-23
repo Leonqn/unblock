@@ -23,7 +23,9 @@ impl Query {
     pub fn for_domain(domain: &str) -> Self {
         let mut buf = Vec::with_capacity(32 + domain.len());
         // Header: ID=0x0001, flags=0x0100 (standard query, recursion desired), QDCOUNT=1
-        buf.extend_from_slice(&[0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        buf.extend_from_slice(&[
+            0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]);
         // Question: encode domain labels
         for label in domain.split('.') {
             buf.push(label.len() as u8);

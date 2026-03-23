@@ -1,10 +1,11 @@
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::stream::Stream;
 use reqwest::Url;
+use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use tokio_stream::StreamExt;
 
@@ -30,11 +31,6 @@ impl Blacklist for DiskBlacklist {
 }
 
 #[derive(Deserialize)]
-struct BlacklistDump {
-    list: Vec<BlacklistEntry>,
-}
-
-#[derive(Deserialize)]
 struct BlacklistEntry {
     d: String,
 }
@@ -50,7 +46,13 @@ pub fn rvzdata(
         create_files_stream_to_disk(blacklist_url, update_interval, json_path.clone())?.filter_map(
             move |json_path| {
                 let bl_path = bl_path.clone();
-                match parse_json_dump_to_disk(&json_path, &bl_path) {
+                let result = parse_json_dump_to_disk(&json_path, &bl_path);
+                // Remove JSON file after parsing — it's 93 MB and no longer needed.
+                // Frees disk space and page cache.
+                if let Err(e) = std::fs::remove_file(&json_path) {
+                    log::warn!("Failed to remove temp JSON file: {:#}", e);
+                }
+                match result {
                     Ok(bl) => Some(Box::new(bl) as Box<dyn Blacklist>),
                     Err(err) => {
                         log::error!("Error occurred while parsing blacklist: {:#}", err);
@@ -63,18 +65,95 @@ pub fn rvzdata(
 }
 
 /// Parse JSON dump from disk file, building a DiskBlacklist (sorted hash file).
-/// Uses typed deserialization from a buffered reader — avoids loading raw JSON bytes.
-/// Peak memory: ~40 MB (Vec of 1.3M domain strings), steady state: ~0 MB (mmap).
-fn parse_json_dump_to_disk(json_path: &PathBuf, bl_path: &PathBuf) -> Result<DiskBlacklist> {
+/// Uses streaming deserialization — processes one entry at a time, never holds full Vec.
+/// Peak memory: ~8 KB (BufReader buffer) + one entry (~100 bytes), steady state: ~0 MB (mmap).
+fn parse_json_dump_to_disk(json_path: &Path, bl_path: &Path) -> Result<DiskBlacklist> {
     let file = std::fs::File::open(json_path)?;
     let reader = BufReader::new(file);
-    let dump: BlacklistDump = serde_json::from_reader(reader)?;
+    let mut builder = DiskBlacklistBuilder::new(bl_path.to_path_buf())?;
 
-    let mut builder = DiskBlacklistBuilder::new(bl_path.clone())?;
-    for entry in dump.list {
-        builder.add(&entry.d)?;
-    }
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    let seed = DumpSeed {
+        builder: &mut builder,
+    };
+    seed.deserialize(&mut deserializer)?;
+
     builder.finish()
+}
+
+/// DeserializeSeed that streams the top-level `{"h": ..., "list": [...]}` object.
+/// Only processes the "list" field, skipping everything else.
+struct DumpSeed<'a> {
+    builder: &'a mut DiskBlacklistBuilder,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for DumpSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        deserializer.deserialize_map(DumpVisitor {
+            builder: self.builder,
+        })
+    }
+}
+
+struct DumpVisitor<'a> {
+    builder: &'a mut DiskBlacklistBuilder,
+}
+
+impl<'de, 'a> Visitor<'de> for DumpVisitor<'a> {
+    type Value = ();
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("blacklist dump object with 'list' field")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<(), A::Error> {
+        while let Some(key) = map.next_key::<String>()? {
+            if key == "list" {
+                map.next_value_seed(ListSeed {
+                    builder: self.builder,
+                })?;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// DeserializeSeed that streams the "list" array, processing entries one by one.
+struct ListSeed<'a> {
+    builder: &'a mut DiskBlacklistBuilder,
+}
+
+impl<'de, 'a> DeserializeSeed<'de> for ListSeed<'a> {
+    type Value = ();
+
+    fn deserialize<D: de::Deserializer<'de>>(self, deserializer: D) -> Result<(), D::Error> {
+        deserializer.deserialize_seq(ListVisitor {
+            builder: self.builder,
+        })
+    }
+}
+
+struct ListVisitor<'a> {
+    builder: &'a mut DiskBlacklistBuilder,
+}
+
+impl<'de, 'a> Visitor<'de> for ListVisitor<'a> {
+    type Value = ();
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("array of blacklist entries")
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> Result<(), A::Error> {
+        while let Some(entry) = seq.next_element::<BlacklistEntry>()? {
+            self.builder.add(&entry.d).map_err(de::Error::custom)?;
+        }
+        Ok(())
+    }
 }
 
 pub fn inside_raw(

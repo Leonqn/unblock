@@ -1,22 +1,16 @@
-use std::{
-    net::SocketAddr,
-    sync::Arc,
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use arc_swap::ArcSwapOption;
 use log::{debug, info};
-use prometheus::Encoder;
 use serde::{Deserialize, Serialize};
 use warp::Filter;
 
 use crate::{
     blacklist::Blacklist,
-    dns::{
-        client::DnsClient,
-        message::Query,
-    },
+    dns::{client::DnsClient, message::Query},
     domains_filter::DomainsFilter,
     last_item::LastItem,
+    prefix_tree::PrefixTree,
     unblock::RoutedEntry,
 };
 
@@ -27,6 +21,8 @@ pub struct AppState {
     pub blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
     pub routed_snapshot: Arc<ArcSwapOption<Vec<RoutedEntry>>>,
     pub dns_pipeline: Arc<dyn DnsClient>,
+    pub dns_routing: Vec<(PrefixTree, Vec<String>)>,
+    pub default_upstreams: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -41,8 +37,8 @@ struct LookupResult {
     blacklisted: bool,
     ads_blocked: bool,
     ads_rule: Option<String>,
+    resolved_by: Vec<String>,
 }
-
 
 pub async fn start_web_server(bind_addr: SocketAddr, state: Arc<AppState>) {
     let state = warp::any().map(move || state.clone());
@@ -50,14 +46,6 @@ pub async fn start_web_server(bind_addr: SocketAddr, state: Arc<AppState>) {
     let index = warp::path::end()
         .and(warp::get())
         .map(|| warp::reply::html(INDEX_HTML));
-
-    let metrics = warp::path("metrics").map(|| {
-        let metric_families = prometheus::gather();
-        let encoder = prometheus::TextEncoder::new();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        warp::reply::with_header(buffer, "Content-Type", encoder.format_type())
-    });
 
     let api_routed = warp::path!("api" / "routed")
         .and(warp::get())
@@ -70,7 +58,11 @@ pub async fn start_web_server(bind_addr: SocketAddr, state: Arc<AppState>) {
                 .unwrap_or_default();
             debug!(
                 "GET /api/routed: snapshot={}, entries={}",
-                if snapshot.is_some() { "present" } else { "none" },
+                if snapshot.is_some() {
+                    "present"
+                } else {
+                    "none"
+                },
                 entries.len()
             );
             warp::reply::json(&entries)
@@ -82,10 +74,7 @@ pub async fn start_web_server(bind_addr: SocketAddr, state: Arc<AppState>) {
         .and(state.clone())
         .and_then(handle_lookup);
 
-    let routes = index
-        .or(metrics)
-        .or(api_routed)
-        .or(api_lookup);
+    let routes = index.or(api_routed).or(api_lookup);
 
     info!("Starting web server on {}", bind_addr);
     warp::serve(routes).run(bind_addr).await;
@@ -120,6 +109,14 @@ async fn handle_lookup(
         })
         .unwrap_or((false, None));
 
+    // Determine which upstream will handle this domain
+    let resolved_by = state
+        .dns_routing
+        .iter()
+        .find(|(tree, _)| tree.contains(&domain))
+        .map(|(_, upstreams)| upstreams.clone())
+        .unwrap_or_else(|| state.default_upstreams.clone());
+
     // DNS resolve
     let dns_query = Query::for_domain(&domain);
     let ips = match state.dns_pipeline.send(dns_query).await {
@@ -136,7 +133,6 @@ async fn handle_lookup(
         blacklisted,
         ads_blocked,
         ads_rule,
+        resolved_by,
     }))
 }
-
-

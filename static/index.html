@@ -117,6 +117,9 @@ async function doLookup() {
     html += '<p style="margin-top:8px">Ads block: ';
     html += d.ads_blocked ? '<span class="tag tag-red">BLOCKED</span>' : '<span class="tag tag-green">OK</span>';
     if (d.ads_rule) html += ' <code style="color:#888">' + esc(d.ads_rule) + '</code>';
+    html += '</p>';
+    html += '<p style="margin-top:8px">Resolved by: ';
+    html += d.resolved_by.length ? d.resolved_by.map(esc).join(', ') : '<i>UDP fallback</i>';
     html += '</p></div>';
     box_.innerHTML = html;
   } catch(e) {
