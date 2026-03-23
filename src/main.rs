@@ -13,7 +13,7 @@ use futures_util::{stream, StreamExt};
 use last_item::LastItem;
 use log::info;
 use prefix_tree::PrefixTree;
-use reqwest::Url;
+use url::Url;
 use routers::KeeneticClient;
 use unblock::Unblocker;
 
@@ -322,15 +322,19 @@ fn create_doh_if_needed(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, time::Duration};
+    use std::{collections::HashSet, path::PathBuf, time::Duration};
 
     use anyhow::Result;
     use bytes::Bytes;
-    use warp::Filter;
+    use http_body_util::Full;
+    use hyper::Response;
+    use hyper::service::service_fn;
+    use hyper_util::rt::TokioIo;
+    use tokio::net::TcpListener;
 
     use crate::{
         config::{AdsBlock, Retry, Unblock},
-        create_dns_client,
+        create_dns_client, DnsClientConfig,
         dns::{
             client::{DnsClient, UdpClient},
             message::Query,
@@ -338,9 +342,24 @@ mod tests {
     };
 
     async fn router_http_stub() {
-        warp::serve(warp::any().map(|| "{}"))
-            .run(([127, 0, 0, 1], 3030))
-            .await;
+        let listener = TcpListener::bind("127.0.0.1:3030").await.unwrap();
+        loop {
+            let Ok((stream, _)) = listener.accept().await else { continue };
+            tokio::spawn(async move {
+                let _ = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(
+                        TokioIo::new(stream),
+                        service_fn(|_req| async {
+                            Ok::<_, hyper::Error>(
+                                Response::builder()
+                                    .body(Full::new(Bytes::from_static(b"{}")))
+                                    .unwrap(),
+                            )
+                        }),
+                    )
+                    .await;
+            });
+        }
     }
 
     #[tokio::test]

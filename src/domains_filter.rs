@@ -12,7 +12,7 @@ use futures_util::stream::Stream;
 use log::{error, warn};
 use once_cell::sync::OnceCell;
 use regex::Regex;
-use reqwest::Url;
+use url::Url;
 use tokio_stream::StreamExt;
 
 #[derive(Debug, PartialEq, Eq)]

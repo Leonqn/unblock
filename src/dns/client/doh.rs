@@ -1,36 +1,38 @@
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use reqwest::{header::HeaderMap, header::HeaderValue, Client, Url};
+use bytes::Bytes;
+use http_body_util::{BodyExt, Empty};
+use hyper::Request;
+use hyper_rustls::HttpsConnectorBuilder;
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::rt::TokioExecutor;
+use url::Url;
 
 use crate::dns::message::{Query, Response};
 
 use super::DnsClient;
 
 pub struct DohClient {
-    http_client: Client,
+    http_client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Empty<Bytes>>,
     server_url: Url,
 }
 
 impl DohClient {
     pub fn new(server_url: Url) -> Result<Self> {
-        let mut headers = HeaderMap::with_capacity(1);
-        headers.insert(
-            "Accept",
-            HeaderValue::from_static("application/dns-message"),
-        );
-        let http_client = Client::builder()
-            .use_rustls_tls()
-            .default_headers(headers)
+        let https = HttpsConnectorBuilder::new()
+            .with_native_roots()?
+            .https_only()
+            .enable_http1()
+            .enable_http2()
+            .build();
+        let http_client = Client::builder(TokioExecutor::new())
             .pool_max_idle_per_host(2)
             .pool_idle_timeout(Duration::from_secs(30))
-            .build()?;
-        Ok(Self {
-            http_client,
-            server_url,
-        })
+            .build(https);
+        Ok(Self { http_client, server_url })
     }
 }
 
@@ -40,15 +42,19 @@ impl DnsClient for DohClient {
         let encoded = URL_SAFE_NO_PAD.encode(query.bytes().as_ref());
         let mut url = self.server_url.clone();
         url.query_pairs_mut().append_pair("dns", &encoded);
-        let response = self
-            .http_client
-            .get(url)
-            .send()
-            .await?
-            .error_for_status()?
-            .bytes()
-            .await?;
-        Response::from_bytes(response)
+
+        let req = Request::builder()
+            .method("GET")
+            .uri(url.as_str())
+            .header("Accept", "application/dns-message")
+            .body(Empty::<Bytes>::new())?;
+
+        let res = self.http_client.request(req).await?;
+        if !res.status().is_success() {
+            return Err(anyhow!("DoH request failed with status: {}", res.status()));
+        }
+        let body = res.into_body().collect().await?.to_bytes();
+        Response::from_bytes(body)
     }
 }
 

@@ -2,29 +2,39 @@ use std::{net::Ipv4Addr, time::Duration};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use reqwest::{Body, Client, Url};
+use bytes::Bytes;
+use http_body_util::{BodyExt, Empty, Full};
+use hyper::{Method, Request};
+use hyper_util::client::legacy::{connect::HttpConnector, Client};
+use hyper_util::rt::TokioExecutor;
 use serde::Deserialize;
+use url::Url;
 
 use super::RouterClient;
 
+type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
+
+fn empty_body() -> BoxBody {
+    Empty::<Bytes>::new().map_err(|never| match never {}).boxed()
+}
+
+fn string_body(s: String) -> BoxBody {
+    Full::new(Bytes::from(s)).map_err(|never| match never {}).boxed()
+}
+
 pub struct KeeneticClient {
-    http: Client,
+    http: Client<HttpConnector, BoxBody>,
     base_url: Url,
     vpn_interface: String,
 }
 
 impl KeeneticClient {
     pub fn new(base_url: Url, vpn_interface: String) -> Self {
-        let http = Client::builder()
+        let http = Client::builder(TokioExecutor::new())
             .pool_max_idle_per_host(1)
             .pool_idle_timeout(Duration::from_secs(60))
-            .build()
-            .unwrap();
-        Self {
-            http,
-            base_url,
-            vpn_interface,
-        }
+            .build_http();
+        Self { http, base_url, vpn_interface }
     }
 
     async fn remove_route(&self, addr: Ipv4Addr) -> Result<()> {
@@ -47,33 +57,33 @@ impl KeeneticClient {
     }
 
     async fn send_rci(&self, request_body: String) -> Result<()> {
-        let response = self
-            .http
-            .post(self.base_url.join("/rci/")?)
-            .body(Body::from(request_body))
-            .send()
-            .await?;
-        if response.status().is_success() {
+        let uri = self.base_url.join("/rci/")?.to_string();
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(uri)
+            .body(string_body(request_body))?;
+        let res = self.http.request(req).await?;
+        if res.status().is_success() {
             Ok(())
         } else {
-            Err(anyhow!(
-                "Got unsucessful response from router {}",
-                response.text().await?
-            ))
+            let body = res.into_body().collect().await?.to_bytes();
+            let text = String::from_utf8_lossy(&body).into_owned();
+            Err(anyhow!("Got unsuccessful response from router {}", text))
         }
     }
 }
+
 #[async_trait]
 impl RouterClient for KeeneticClient {
     async fn get_routed(&self) -> Result<Vec<(Ipv4Addr, String)>> {
-        let response = self
-            .http
-            .get(self.base_url.join("/rci/ip/route")?)
-            .send()
-            .await?
-            .bytes()
-            .await?;
-        let routes: Routes = serde_json::from_slice(&response)?;
+        let uri = self.base_url.join("/rci/ip/route")?.to_string();
+        let req = Request::builder()
+            .method(Method::GET)
+            .uri(uri)
+            .body(empty_body())?;
+        let res = self.http.request(req).await?;
+        let body = res.into_body().collect().await?.to_bytes();
+        let routes: Routes = serde_json::from_slice(&body)?;
         Ok(routes
             .routes()
             .into_iter()

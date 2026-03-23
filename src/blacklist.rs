@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::stream::Stream;
-use reqwest::Url;
+use url::Url;
 use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use tokio_stream::StreamExt;
