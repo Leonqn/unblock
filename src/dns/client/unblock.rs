@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr, pin::Pin};
+use std::{collections::HashSet, net::Ipv4Addr};
 
 use super::DnsClient;
 use crate::{
@@ -10,7 +10,6 @@ use crate::{
 };
 use anyhow::Result;
 use async_trait::async_trait;
-use futures_util::Stream;
 use log::info;
 
 pub struct UnblockClient<C> {
@@ -27,9 +26,8 @@ impl<C> UnblockClient<C> {
         unblocker: Unblocker,
         manual_dns_whitelist: DomainsFilter,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
-        blacklists: Vec<Pin<Box<dyn Stream<Item = Box<dyn Blacklist>> + Send>>>,
+        blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
     ) -> Self {
-        let blacklists = blacklists.into_iter().map(LastItem::new).collect();
         Self {
             client,
             unblocker,

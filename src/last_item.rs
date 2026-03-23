@@ -8,6 +8,14 @@ pub struct LastItem<T> {
     item: Arc<ArcSwapOption<T>>,
 }
 
+impl<T> Clone for LastItem<T> {
+    fn clone(&self) -> Self {
+        Self {
+            item: self.item.clone(),
+        }
+    }
+}
+
 impl<T: Send + Sync + 'static> LastItem<T> {
     pub fn new(stream: impl Stream<Item = T> + Send + 'static) -> Self {
         let mut stream = Box::pin(stream);

@@ -18,6 +18,7 @@ pub struct Config {
     pub ads_block: Option<AdsBlock>,
     pub retry: Option<Retry>,
     pub cache_max_size: Option<usize>,
+    pub web_bind_addr: Option<SocketAddr>,
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
 }

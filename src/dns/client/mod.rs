@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 
 use async_trait::async_trait;
@@ -28,4 +30,11 @@ pub use unblock::*;
 #[async_trait]
 pub trait DnsClient: Send + Sync + 'static {
     async fn send(&self, query: Query) -> Result<Response>;
+}
+
+#[async_trait]
+impl<T: DnsClient + ?Sized> DnsClient for Arc<T> {
+    async fn send(&self, query: Query) -> Result<Response> {
+        (**self).send(query).await
+    }
 }

@@ -1,12 +1,14 @@
 use std::{
     collections::{HashMap, HashSet},
     net::Ipv4Addr,
+    sync::Arc,
     time::Duration,
 };
 
 use crate::routers::RouterClient;
 
 use anyhow::Result;
+use arc_swap::ArcSwapOption;
 use log::{error, info};
 use tokio::{
     sync::{
@@ -25,16 +27,34 @@ pub enum UnblockResponse {
 
 pub struct Unblocker {
     router_requests: UnboundedSender<AddRoutesRequest>,
+    routed_snapshot: Arc<ArcSwapOption<Vec<RoutedEntry>>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RoutedEntry {
+    pub ip: Ipv4Addr,
+    pub comment: String,
 }
 
 impl Unblocker {
     pub fn new(router_client: impl RouterClient, route_ttl: Option<Duration>) -> Self {
+        let routed_snapshot = Arc::new(ArcSwapOption::empty());
         let (router_requests_tx, router_requests_rx) = unbounded_channel();
-        let router_handler = router_requests_handler(router_client, route_ttl, router_requests_rx);
+        let router_handler = router_requests_handler(
+            router_client,
+            route_ttl,
+            router_requests_rx,
+            routed_snapshot.clone(),
+        );
         tokio::spawn(router_handler);
         Self {
             router_requests: router_requests_tx,
+            routed_snapshot,
         }
+    }
+
+    pub fn routed_snapshot(&self) -> Arc<ArcSwapOption<Vec<RoutedEntry>>> {
+        self.routed_snapshot.clone()
     }
 
     pub async fn unblock(
@@ -70,18 +90,27 @@ async fn router_requests_handler(
     router_client: impl RouterClient,
     route_ttl: Option<Duration>,
     mut requests: UnboundedReceiver<AddRoutesRequest>,
+    routed_snapshot: Arc<ArcSwapOption<Vec<RoutedEntry>>>,
 ) {
     let loaded = load_routed(&router_client).await;
+    info!("Loaded {} routed IPs from router", loaded.len());
     let now = Instant::now();
-    let mut unblocked: HashMap<Ipv4Addr, Instant> =
-        loaded.into_iter().map(|ip| (ip, now)).collect();
+    let mut unblocked: HashMap<Ipv4Addr, (Instant, String)> = loaded
+        .into_iter()
+        .map(|(ip, comment)| (ip, (now, comment)))
+        .collect();
+    update_snapshot(&routed_snapshot, &unblocked);
 
     while let Some(request) = requests.recv().await {
         let now = Instant::now();
+        let mut changed = false;
         // Touch all requested IPs to refresh their TTL
         for &ip in &request.ips {
-            if let Some(last_seen) = unblocked.get_mut(&ip) {
-                *last_seen = now;
+            if let Some(entry) = unblocked.get_mut(&ip) {
+                entry.0 = now;
+                if entry.1.is_empty() && !request.comment.is_empty() {
+                    entry.1 = request.comment.clone();
+                }
             }
         }
         let blocked = request
@@ -95,8 +124,9 @@ async fn router_requests_handler(
             match add_result {
                 Ok(_) => {
                     for &ip in &request.ips {
-                        unblocked.insert(ip, now);
+                        unblocked.insert(ip, (now, request.comment.clone()));
                     }
+                    changed = true;
                     let _ = request.waiter.send(Ok(UnblockResponse::Unblocked(blocked)));
                 }
                 Err(err) => {
@@ -106,11 +136,11 @@ async fn router_requests_handler(
         } else {
             let _ = request.waiter.send(Ok(UnblockResponse::Skipped));
         }
-        // Remove up to 5 expired routes on each request
+        // Remove up to 50 expired routes on each request
         if let Some(ttl) = route_ttl {
             let expired: Vec<Ipv4Addr> = unblocked
                 .iter()
-                .filter(|(_, last_seen)| now.duration_since(**last_seen) > ttl)
+                .filter(|(_, (last_seen, _))| now.duration_since(*last_seen) > ttl)
                 .map(|(ip, _)| *ip)
                 .take(50)
                 .collect();
@@ -118,6 +148,7 @@ async fn router_requests_handler(
                 match router_client.remove_route(ip).await {
                     Ok(_) => {
                         unblocked.remove(&ip);
+                        changed = true;
                         info!("Removed expired route {}", ip);
                     }
                     Err(err) => {
@@ -126,10 +157,27 @@ async fn router_requests_handler(
                 }
             }
         }
+        if changed {
+            update_snapshot(&routed_snapshot, &unblocked);
+        }
     }
 }
 
-async fn load_routed(router_client: &impl RouterClient) -> HashSet<Ipv4Addr> {
+fn update_snapshot(
+    snapshot: &ArcSwapOption<Vec<RoutedEntry>>,
+    unblocked: &HashMap<Ipv4Addr, (Instant, String)>,
+) {
+    let entries: Vec<RoutedEntry> = unblocked
+        .iter()
+        .map(|(ip, (_, comment))| RoutedEntry {
+            ip: *ip,
+            comment: comment.clone(),
+        })
+        .collect();
+    snapshot.store(Some(Arc::new(entries)));
+}
+
+async fn load_routed(router_client: &impl RouterClient) -> Vec<(Ipv4Addr, String)> {
     use fure::backoff::fixed;
     use fure::policies::{backoff, cond};
     let policy = cond(backoff(fixed(Duration::from_secs(5))), |result| {
@@ -162,7 +210,6 @@ mod tests {
     };
     use pretty_assertions::assert_eq;
     use std::{
-        collections::HashSet,
         net::Ipv4Addr,
         sync::atomic::AtomicUsize,
         sync::Arc,
@@ -207,9 +254,9 @@ mod tests {
 
     #[async_trait]
     impl RouterClient for RouterMock {
-        async fn get_routed(&self) -> Result<HashSet<Ipv4Addr>> {
+        async fn get_routed(&self) -> Result<Vec<(Ipv4Addr, String)>> {
             self.get_called.store(true, Ordering::Relaxed);
-            Ok(HashSet::new())
+            Ok(Vec::new())
         }
 
         async fn add_routes(&self, _ips: &[Ipv4Addr], _comment: &str) -> Result<()> {

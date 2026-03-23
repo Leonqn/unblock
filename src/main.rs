@@ -1,20 +1,21 @@
-use std::{collections::HashSet, net::SocketAddr, pin::Pin, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use crate::config::{AdsBlock, Config, DnsRoute, Retry, Unblock};
+use crate::web::AppState;
 use anyhow::Result;
+use arc_swap::ArcSwapOption;
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, DomainRoutingClient, Either,
     RetryClient, RoundRobinClient, UdpClient, UnblockClient,
 };
 use domains_filter::DomainsFilter;
 use futures_util::{stream, StreamExt};
+use last_item::LastItem;
 use log::info;
 use prefix_tree::PrefixTree;
-use prometheus::{Encoder, TextEncoder};
 use reqwest::Url;
 use routers::KeeneticClient;
 use unblock::Unblocker;
-use warp::Filter;
 
 mod blacklist;
 mod cache;
@@ -27,44 +28,40 @@ mod last_item;
 mod prefix_tree;
 mod routers;
 mod unblock;
+mod web;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
     let config = Config::init()?;
     info!("Starting service");
-    let metrics_service = config
-        .metrics_bind_addr
-        .map(|addr| tokio::spawn(start_metrics_server(addr)));
-    let main_service = tokio::spawn(create_service(config).await?);
-    tokio::select! {
-        metrics = async { metrics_service.unwrap().await }, if metrics_service.is_some() => {
-            metrics
-        }
-        main_service = main_service => {
-            main_service
-        }
-    }?;
-    Ok(())
-}
 
-async fn create_service(config: Config) -> Result<impl std::future::Future<Output = ()>> {
     let data_dir = std::path::PathBuf::from(&config.data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
-    let dns_pipeline = Arc::new(
-        create_dns_client(
-            config.doh_upstreams,
-            config.dns_routing,
-            config.udp_dns_upstream,
-            config.ads_block,
-            config.unblock,
-            config.retry,
-            data_dir,
-            config.cache_max_size,
-        )
-        .await?,
-    );
+    let (dns_pipeline, app_state) = create_dns_client(
+        config.doh_upstreams,
+        config.dns_routing,
+        config.udp_dns_upstream,
+        config.ads_block,
+        config.unblock,
+        config.retry,
+        data_dir,
+        config.cache_max_size,
+    )
+    .await?;
+
+    let dns_pipeline: Arc<dyn DnsClient> = Arc::new(dns_pipeline);
+    let app_state = Arc::new(AppState {
+        domains_filter: app_state.domains_filter,
+        blacklists: app_state.blacklists,
+        routed_snapshot: app_state.routed_snapshot,
+        dns_pipeline: dns_pipeline.clone(),
+    });
+
+    let web_bind_addr = config.web_bind_addr.or(config.metrics_bind_addr);
+    let web_service = web_bind_addr
+        .map(|addr| tokio::spawn(web::start_web_server(addr, app_state)));
 
     let request_handler = move |query| {
         let dns_pipeline = dns_pipeline.clone();
@@ -73,10 +70,26 @@ async fn create_service(config: Config) -> Result<impl std::future::Future<Outpu
     let udp_server =
         dns::server::create_udp_server(config.bind_addr, request_handler.clone()).await?;
     let tcp_server = dns::server::create_tcp_server(config.bind_addr, request_handler).await?;
-    let service = async move {
+
+    let main_service = tokio::spawn(async move {
         tokio::join!(udp_server, tcp_server);
-    };
-    Ok(service)
+    });
+
+    tokio::select! {
+        web = async { web_service.unwrap().await }, if web_service.is_some() => {
+            web
+        }
+        main_service = main_service => {
+            main_service
+        }
+    }?;
+    Ok(())
+}
+
+struct PartialAppState {
+    domains_filter: Option<LastItem<DomainsFilter>>,
+    blacklists: Vec<LastItem<Box<dyn blacklist::Blacklist>>>,
+    routed_snapshot: Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
 }
 
 async fn create_dns_client(
@@ -84,11 +97,11 @@ async fn create_dns_client(
     dns_routing: Option<Vec<DnsRoute>>,
     udp_upstream: SocketAddr,
     ads_block: Option<AdsBlock>,
-    unblock: Option<Unblock>,
+    unblock_config: Option<Unblock>,
     retry_config: Option<Retry>,
     data_dir: std::path::PathBuf,
     cache_max_size: Option<usize>,
-) -> Result<impl DnsClient> {
+) -> Result<(impl DnsClient, PartialAppState)> {
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
     let domain_routed = create_domain_routing_if_needed(doh, dns_routing)?;
@@ -100,17 +113,26 @@ async fn create_dns_client(
         )),
         None => Either::Right(domain_routed),
     };
-    let unblock_client = create_unblock_if_needed(retry_client, unblock, &data_dir)?;
+
+    let (unblock_client, blacklists, routed_snapshot) =
+        create_unblock_if_needed(retry_client, unblock_config, &data_dir)?;
     let cached_client = CachedClient::new(unblock_client, cache_max_size);
-    let ads_block_client = create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
-    Ok(ads_block_client)
+    let (ads_block_client, domains_filter) =
+        create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
+
+    let state = PartialAppState {
+        domains_filter,
+        blacklists,
+        routed_snapshot,
+    };
+    Ok((ads_block_client, state))
 }
 
 fn create_ads_block_if_needed(
     client: impl DnsClient,
     config: Option<AdsBlock>,
     data_dir: &std::path::Path,
-) -> Result<impl DnsClient> {
+) -> Result<(impl DnsClient, Option<LastItem<DomainsFilter>>)> {
     match config {
         Some(config) => {
             let domains_filter_stream = domains_filter::filters_stream(
@@ -119,12 +141,11 @@ fn create_ads_block_if_needed(
                 config.manual_rules,
                 Some(data_dir.to_path_buf()),
             )?;
-            Ok(Either::Left(AdsBlockClient::new(
-                client,
-                domains_filter_stream,
-            )))
+            let last_item = LastItem::new(domains_filter_stream);
+            let client = AdsBlockClient::new(client, last_item.clone());
+            Ok((Either::Left(client), Some(last_item)))
         }
-        None => Ok(Either::Right(client)),
+        None => Ok((Either::Right(client), None)),
     }
 }
 
@@ -132,36 +153,46 @@ fn create_unblock_if_needed(
     client: impl DnsClient,
     config: Option<Unblock>,
     data_dir: &std::path::Path,
-) -> Result<impl DnsClient> {
+) -> Result<(
+    impl DnsClient,
+    Vec<LastItem<Box<dyn blacklist::Blacklist>>>,
+    Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
+)> {
     match config {
         Some(config) => {
             let router_client =
                 KeeneticClient::new(config.router_api_uri.parse()?, config.route_interface);
 
-            let mut blacklist_streams: Vec<
-                Pin<Box<dyn futures_util::Stream<Item = Box<dyn blacklist::Blacklist>> + Send>>,
-            > = Vec::new();
+            let mut blacklist_last_items: Vec<LastItem<Box<dyn blacklist::Blacklist>>> = Vec::new();
+
             if let Some(url) = config.rvzdata_url {
-                blacklist_streams.push(
-                    blacklist::rvzdata(
-                        url.parse()?,
-                        config.blacklist_update_interval,
-                        data_dir.to_path_buf(),
-                    )?
-                    .boxed(),
-                );
+                let stream = blacklist::rvzdata(
+                    url.parse()?,
+                    config.blacklist_update_interval,
+                    data_dir.to_path_buf(),
+                )?;
+                let last_item = LastItem::new(stream);
+                blacklist_last_items.push(last_item);
             }
             if let Some(url) = config.inside_raw_url {
-                blacklist_streams.push(
-                    blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?.boxed(),
-                );
+                let stream =
+                    blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?;
+                let last_item = LastItem::new(stream);
+                blacklist_last_items.push(last_item);
             }
-            if blacklist_streams.is_empty() {
+            if blacklist_last_items.is_empty() {
                 let empty: Box<dyn blacklist::Blacklist> = Box::new(PrefixTree::default());
-                blacklist_streams.push(stream::iter([empty]).chain(stream::pending()).boxed());
+                let stream = stream::iter([empty]).chain(stream::pending());
+                blacklist_last_items.push(LastItem::new(stream));
             }
+
             let unblocker = Unblocker::new(router_client, config.route_ttl);
-            Ok(Either::Left(UnblockClient::new(
+            let routed_snapshot = unblocker.routed_snapshot();
+
+            let blacklists_for_client: Vec<LastItem<Box<dyn blacklist::Blacklist>>> =
+                blacklist_last_items.iter().cloned().collect();
+
+            let unblock_client = UnblockClient::new(
                 client,
                 unblocker,
                 DomainsFilter::new(
@@ -172,10 +203,19 @@ fn create_unblock_if_needed(
                     None,
                 )?,
                 config.manual_whitelist.unwrap_or_default(),
-                blacklist_streams,
-            )))
+                blacklists_for_client,
+            );
+            Ok((
+                Either::Left(unblock_client),
+                blacklist_last_items,
+                routed_snapshot,
+            ))
         }
-        None => Ok(Either::Right(client)),
+        None => Ok((
+            Either::Right(client),
+            vec![],
+            Arc::new(ArcSwapOption::empty()),
+        )),
     }
 }
 
@@ -238,18 +278,6 @@ fn create_doh_if_needed(
     }
 }
 
-async fn start_metrics_server(bind_addr: SocketAddr) {
-    warp::serve(warp::path("metrics").map(|| {
-        let metric_families = prometheus::gather();
-        let encoder = TextEncoder::new();
-        let mut buffer = vec![];
-        encoder.encode(&metric_families, &mut buffer).unwrap();
-        warp::reply::with_header(buffer, "Content-Type", encoder.format_type())
-    }))
-    .run(bind_addr)
-    .await;
-}
-
 #[cfg(test)]
 mod tests {
     use std::{collections::HashSet, time::Duration};
@@ -260,12 +288,11 @@ mod tests {
 
     use crate::{
         config::{AdsBlock, Retry, Unblock},
-        create_service,
+        create_dns_client,
         dns::{
             client::{DnsClient, UdpClient},
             message::Query,
         },
-        Config,
     };
 
     async fn router_http_stub() {
@@ -279,12 +306,23 @@ mod tests {
         tokio::spawn(router_http_stub());
         tokio::task::yield_now().await;
         let bind_addr = "0.0.0.0:3356".parse()?;
-        let config = Config {
-            bind_addr,
-            metrics_bind_addr: Some("0.0.0.0:3357".parse()?),
-            udp_dns_upstream: "8.8.8.8:53".parse()?,
-            dns_routing: None,
-            unblock: Some(Unblock {
+        let data_dir = std::path::PathBuf::from("/tmp/unblock-test");
+        std::fs::create_dir_all(&data_dir)?;
+        let (dns_pipeline, _state) = create_dns_client(
+            Some(vec![
+                "https://dns.google/dns-query".to_owned(),
+                "https://dns.cloudflare.com/dns-query".to_owned(),
+                "https://dns.quad9.net/dns-query".to_owned(),
+            ]),
+            None,
+            "8.8.8.8:53".parse()?,
+            Some(AdsBlock {
+                filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
+                    .to_owned(),
+                filter_update_interval: Duration::from_secs(10),
+                manual_rules: vec!["@||youtube.com".to_owned()],
+            }),
+            Some(Unblock {
                 rvzdata_url: Some(
                     "https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv"
                         .to_owned(),
@@ -297,26 +335,27 @@ mod tests {
                 route_ttl: Some(Duration::from_secs(10)),
                 manual_whitelist_dns: Some(Vec::new()),
             }),
-            ads_block: Some(AdsBlock {
-                filter_uri: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt"
-                    .to_owned(),
-                filter_update_interval: Duration::from_secs(10),
-                manual_rules: vec!["@||youtube.com".to_owned()],
-            }),
-            doh_upstreams: Some(vec![
-                "https://dns.google/dns-query".to_owned(),
-                "https://dns.cloudflare.com/dns-query".to_owned(),
-                "https://dns.quad9.net/dns-query".to_owned(),
-            ]),
-            retry: Some(Retry {
+            Some(Retry {
                 attempts_count: 3,
                 next_attempt_delay: Duration::from_millis(200),
             }),
-            cache_max_size: None,
-            data_dir: "/tmp/unblock-test".to_owned(),
+            data_dir,
+            None,
+        )
+        .await?;
+
+        let dns_pipeline = std::sync::Arc::new(dns_pipeline);
+        let request_handler = move |query| {
+            let dns_pipeline = dns_pipeline.clone();
+            async move { dns_pipeline.send(query).await }
         };
-        let server = create_service(config).await.map_err(|x| dbg!(x))?;
-        tokio::spawn(server);
+        let udp_server =
+            crate::dns::server::create_udp_server(bind_addr, request_handler.clone()).await?;
+        let tcp_server =
+            crate::dns::server::create_tcp_server(bind_addr, request_handler).await?;
+        tokio::spawn(async move {
+            tokio::join!(udp_server, tcp_server);
+        });
         let udp_client = UdpClient::new(bind_addr).await?;
         let requests = vec![
             include_bytes!("../test/dns_packets/q_api.browser.yandex.com.bin").as_ref(),

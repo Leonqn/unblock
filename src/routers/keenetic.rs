@@ -1,4 +1,4 @@
-use std::{collections::HashSet, net::Ipv4Addr, time::Duration};
+use std::{net::Ipv4Addr, time::Duration};
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -65,7 +65,7 @@ impl KeeneticClient {
 }
 #[async_trait]
 impl RouterClient for KeeneticClient {
-    async fn get_routed(&self) -> Result<HashSet<Ipv4Addr>> {
+    async fn get_routed(&self) -> Result<Vec<(Ipv4Addr, String)>> {
         let response = self
             .http
             .get(self.base_url.join("/rci/ip/route")?)
@@ -79,7 +79,7 @@ impl RouterClient for KeeneticClient {
             .into_iter()
             .flatten()
             .filter(|r| r.interface == self.vpn_interface)
-            .filter_map(|r| r.host)
+            .filter_map(|r| Some((r.host?, r.comment.unwrap_or_default())))
             .collect())
     }
 
@@ -115,4 +115,5 @@ impl Routes {
 struct Route {
     host: Option<Ipv4Addr>,
     interface: String,
+    comment: Option<String>,
 }

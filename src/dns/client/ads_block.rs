@@ -7,7 +7,6 @@ use crate::{
 use anyhow::Result;
 use async_trait::async_trait;
 use bytes::BytesMut;
-use futures_util::stream::Stream;
 use log::info;
 
 pub struct AdsBlockClient<C> {
@@ -16,9 +15,7 @@ pub struct AdsBlockClient<C> {
 }
 
 impl<C> AdsBlockClient<C> {
-    pub fn new(dns_client: C, filters: impl Stream<Item = DomainsFilter> + Send + 'static) -> Self {
-        let domains_filter = LastItem::new(filters);
-
+    pub fn new(dns_client: C, domains_filter: LastItem<DomainsFilter>) -> Self {
         Self {
             dns_client,
             domains_filter,
