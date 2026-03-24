@@ -81,7 +81,7 @@ impl Response {
 
     pub fn append_trace(&mut self, s: &str) {
         if !self.trace.is_empty() {
-            self.trace.push('\n');
+            self.trace.push_str("; ");
         }
         self.trace.push_str(s);
     }
