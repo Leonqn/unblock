@@ -111,16 +111,10 @@ async function doLookup() {
     let html = '<div class="result-box">';
     html += '<p><b>' + esc(d.domain) + '</b></p>';
     html += '<p style="margin-top:8px">IPs: ' + (d.ips.length ? d.ips.map(esc).join(', ') : '<i>none</i>') + '</p>';
-    html += '<p style="margin-top:8px">Blacklist (routed): ';
-    html += d.blacklisted ? '<span class="tag tag-red">YES</span>' : '<span class="tag tag-green">NO</span>';
-    html += '</p>';
-    html += '<p style="margin-top:8px">Ads block: ';
-    html += d.ads_blocked ? '<span class="tag tag-red">BLOCKED</span>' : '<span class="tag tag-green">OK</span>';
-    if (d.ads_rule) html += ' <code style="color:#888">' + esc(d.ads_rule) + '</code>';
-    html += '</p>';
-    html += '<p style="margin-top:8px">Resolved by: ';
-    html += d.resolved_by.length ? d.resolved_by.map(esc).join(', ') : '<i>UDP fallback</i>';
-    html += '</p></div>';
+    if (d.trace) {
+      html += '<p style="margin-top:8px">Trace: <code style="color:#888">' + esc(d.trace) + '</code></p>';
+    }
+    html += '</div>';
     box_.innerHTML = html;
   } catch(e) {
     box_.innerHTML = '<div class="result-box">Error: ' + esc(e.message) + '</div>';
