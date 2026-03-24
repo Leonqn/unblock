@@ -33,10 +33,14 @@ where
     async fn send(&self, query: Query) -> Result<Response> {
         let domains: Vec<String> = query.parse()?.domains().collect();
         for (tree, client) in &self.routes {
-            if domains.iter().any(|d| tree.contains(d)) {
-                return client.send(query).await;
+            if let Some(domain) = domains.iter().find(|d| tree.contains(d)) {
+                let mut response = client.send(query).await?;
+                response.append_trace(&format!("route: {}", domain));
+                return Ok(response);
             }
         }
-        self.default_client.send(query).await
+        let mut response = self.default_client.send(query).await?;
+        response.append_trace("route: default");
+        Ok(response)
     }
 }
