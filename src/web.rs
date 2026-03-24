@@ -1,6 +1,7 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
 use bytes::Bytes;
@@ -87,14 +88,14 @@ pub async fn start_web_server(bind_addr: SocketAddr, state: Arc<AppState>) {
         };
         let state = state.clone();
         tokio::spawn(async move {
-            if let Err(e) = hyper::server::conn::http1::Builder::new()
+            let conn = hyper::server::conn::http1::Builder::new()
+                .keep_alive(true)
                 .serve_connection(
                     TokioIo::new(stream),
                     service_fn(move |req| handle_request(req, state.clone())),
-                )
-                .await
-            {
-                error!("Connection error: {}", e);
+                );
+            if let Err(e) = tokio::time::timeout(Duration::from_secs(120), conn).await {
+                debug!("Connection timed out: {}", e);
             }
         });
     }
