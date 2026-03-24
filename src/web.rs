@@ -1,7 +1,6 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use arc_swap::ArcSwapOption;
 use bytes::Bytes;
