@@ -12,7 +12,7 @@ use bytes::{Bytes, BytesMut};
 
 pub struct CachedClient<C> {
     inner_client: C,
-    cache: RwLock<Cache<Bytes, Bytes>>,
+    cache: RwLock<Cache<Bytes, (Bytes, String)>>,
 }
 
 impl<C> CachedClient<C>
@@ -28,10 +28,11 @@ where
 
     fn get_from_cache(&self, query: &Query) -> Option<Response> {
         let cache = self.cache.read().unwrap();
-        let cached_response = cache.get(&query.bytes().slice(2..))?;
-        let mut response = BytesMut::from(cached_response.as_ref());
+        let (cached_bytes, cached_trace) = cache.get(&query.bytes().slice(2..))?;
+        let mut response = BytesMut::from(cached_bytes.as_ref());
         response[0..2].copy_from_slice(&query.bytes()[0..2]);
         let mut response = Response::from_bytes(response.freeze()).expect("Must be valid response");
+        response.append_trace(cached_trace);
         response.append_trace("cached");
         Some(response)
     }
@@ -40,7 +41,11 @@ where
         let mut cache = self.cache.write().unwrap();
         let ttl = response.parse()?.min_ttl();
         if let Some(ttl) = ttl {
-            cache.insert(query.bytes().slice(2..), response.bytes().clone(), ttl);
+            cache.insert(
+                query.bytes().slice(2..),
+                (response.bytes().clone(), response.trace().to_owned()),
+                ttl,
+            );
             cache.remove_expired(3);
         }
         Ok(())
