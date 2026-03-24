@@ -101,6 +101,7 @@ impl DiskBlacklistBuilder {
         }
 
         // Sort hashes in-place using mmap, then deduplicate
+        let deduped_len;
         {
             let file = std::fs::OpenOptions::new()
                 .read(true)
@@ -110,9 +111,15 @@ impl DiskBlacklistBuilder {
             let ptr = mmap.as_mut_ptr() as *mut u64;
             let slice = unsafe { std::slice::from_raw_parts_mut(ptr, self.count) };
             slice.sort_unstable();
-            let deduped_len = dedup_sorted(slice);
+            deduped_len = dedup_sorted(slice);
             mmap.flush()?;
-            drop(mmap);
+            // Drop mmap and file before truncating — on Windows, set_len fails
+            // with OS error 1224 if the file still has a mapped section.
+        }
+        {
+            let file = std::fs::OpenOptions::new()
+                .write(true)
+                .open(&self.path)?;
             file.set_len((deduped_len * std::mem::size_of::<u64>()) as u64)?;
         }
 
