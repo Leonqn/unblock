@@ -69,15 +69,28 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
             .domains()
             .reduce(|acc, x| acc + "/" + &x)
             .unwrap_or_else(|| "empty".to_owned());
-        let unblocked = self.unblocker.unblock(blocked, &domains).await?;
-        match unblocked {
-            UnblockResponse::Unblocked(_) => {
-                for domain in parsed_response.domains() {
-                    info!("domain {} unblocked", domain);
+        let blocked_ips: Vec<Ipv4Addr> = blocked.collect();
+        if blocked_ips.is_empty() {
+            dns_response.append_trace("not blacklisted");
+        } else {
+            let ips_str = blocked_ips
+                .iter()
+                .map(|ip| ip.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let unblocked = self.unblocker.unblock(blocked_ips, &domains).await?;
+            match unblocked {
+                UnblockResponse::Unblocked(_) => {
+                    for domain in parsed_response.domains() {
+                        info!("domain {} unblocked", domain);
+                    }
+                    dns_response.append_trace(&format!("blacklisted [{}] → routed", ips_str));
                 }
-                dns_response.append_trace("blacklisted→routed");
+                UnblockResponse::Skipped => {
+                    dns_response
+                        .append_trace(&format!("blacklisted [{}] → already routed", ips_str));
+                }
             }
-            UnblockResponse::Skipped => {}
         }
 
         Ok(dns_response)

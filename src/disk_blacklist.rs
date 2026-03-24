@@ -117,9 +117,7 @@ impl DiskBlacklistBuilder {
             // with OS error 1224 if the file still has a mapped section.
         }
         {
-            let file = std::fs::OpenOptions::new()
-                .write(true)
-                .open(&self.path)?;
+            let file = std::fs::OpenOptions::new().write(true).open(&self.path)?;
             file.set_len((deduped_len * std::mem::size_of::<u64>()) as u64)?;
         }
 
