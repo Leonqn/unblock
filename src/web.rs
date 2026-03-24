@@ -88,14 +88,12 @@ pub async fn start_web_server(bind_addr: SocketAddr, state: Arc<AppState>) {
         };
         let state = state.clone();
         tokio::spawn(async move {
-            let conn = hyper::server::conn::http1::Builder::new()
-                .keep_alive(true)
-                .serve_connection(
-                    TokioIo::new(stream),
-                    service_fn(move |req| handle_request(req, state.clone())),
-                );
-            if let Err(e) = tokio::time::timeout(Duration::from_secs(120), conn).await {
-                debug!("Connection timed out: {}", e);
+            let conn = hyper::server::conn::http1::Builder::new().serve_connection(
+                TokioIo::new(stream),
+                service_fn(move |req| handle_request(req, state.clone())),
+            );
+            if let Err(e) = conn.await {
+                debug!("Connection error: {}", e);
             }
         });
     }
