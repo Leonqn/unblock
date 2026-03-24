@@ -32,7 +32,10 @@ impl DohClient {
             .pool_max_idle_per_host(2)
             .pool_idle_timeout(Duration::from_secs(30))
             .build(https);
-        Ok(Self { http_client, server_url })
+        Ok(Self {
+            http_client,
+            server_url,
+        })
     }
 }
 
@@ -54,7 +57,9 @@ impl DnsClient for DohClient {
             return Err(anyhow!("DoH request failed with status: {}", res.status()));
         }
         let body = res.into_body().collect().await?.to_bytes();
-        Response::from_bytes(body)
+        let mut response = Response::from_bytes(body)?;
+        response.append_trace(self.server_url.as_str());
+        Ok(response)
     }
 }
 

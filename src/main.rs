@@ -1,4 +1,9 @@
-use std::{collections::HashSet, net::SocketAddr, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    collections::HashSet,
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::config::{AdsBlock, Config, DnsRoute, Retry, Unblock};
 use crate::web::AppState;
@@ -13,9 +18,9 @@ use futures_util::{stream, StreamExt};
 use last_item::LastItem;
 use log::info;
 use prefix_tree::PrefixTree;
-use url::Url;
 use routers::KeeneticClient;
 use unblock::Unblocker;
+use url::Url;
 
 mod blacklist;
 mod cache;
@@ -53,12 +58,8 @@ async fn main() -> Result<()> {
 
     let dns_pipeline: Arc<dyn DnsClient> = Arc::new(dns_pipeline);
     let app_state = Arc::new(AppState {
-        domains_filter: app_state.domains_filter,
-        blacklists: app_state.blacklists,
         routed_snapshot: app_state.routed_snapshot,
         dns_pipeline: dns_pipeline.clone(),
-        dns_routing: app_state.dns_routing,
-        default_upstreams: app_state.default_upstreams,
     });
 
     let web_bind_addr = config.web_bind_addr.or(config.metrics_bind_addr);
@@ -90,16 +91,11 @@ async fn main() -> Result<()> {
 
 struct UnblockResult<C> {
     client: C,
-    blacklists: Vec<LastItem<Box<dyn blacklist::Blacklist>>>,
     routed_snapshot: Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
 }
 
 struct PartialAppState {
-    domains_filter: Option<LastItem<DomainsFilter>>,
-    blacklists: Vec<LastItem<Box<dyn blacklist::Blacklist>>>,
     routed_snapshot: Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
-    dns_routing: Vec<(prefix_tree::PrefixTree, Vec<String>)>,
-    default_upstreams: Vec<String>,
 }
 
 struct DnsClientConfig {
@@ -124,29 +120,6 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         data_dir,
         cache_max_size,
     } = cfg;
-    // Build routing info for AppState before consuming dns_routing
-    let default_upstreams = doh_upstreams
-        .as_deref()
-        .unwrap_or(&[])
-        .iter()
-        .map(|s| s.to_owned())
-        .collect::<Vec<_>>();
-    let web_dns_routing: Vec<(PrefixTree, Vec<String>)> = dns_routing
-        .as_ref()
-        .map(|routes| {
-            routes
-                .iter()
-                .map(|route| {
-                    let mut tree = PrefixTree::default();
-                    for domain in &route.domains {
-                        tree.add(domain.clone());
-                    }
-                    (tree, route.doh_upstreams.clone())
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
     let domain_routed = create_domain_routing_if_needed(doh, dns_routing)?;
@@ -159,19 +132,14 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         None => Either::Right(domain_routed),
     };
 
-    let UnblockResult { client: unblock_client, blacklists, routed_snapshot } =
-        create_unblock_if_needed(retry_client, unblock_config, &data_dir)?;
-    let cached_client = CachedClient::new(unblock_client, cache_max_size);
-    let (ads_block_client, domains_filter) =
-        create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
-
-    let state = PartialAppState {
-        domains_filter,
-        blacklists,
+    let UnblockResult {
+        client: unblock_client,
         routed_snapshot,
-        dns_routing: web_dns_routing,
-        default_upstreams,
-    };
+    } = create_unblock_if_needed(retry_client, unblock_config, &data_dir)?;
+    let cached_client = CachedClient::new(unblock_client, cache_max_size);
+    let ads_block_client = create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
+
+    let state = PartialAppState { routed_snapshot };
     Ok((ads_block_client, state))
 }
 
@@ -179,7 +147,7 @@ fn create_ads_block_if_needed(
     client: impl DnsClient,
     config: Option<AdsBlock>,
     data_dir: &Path,
-) -> Result<(impl DnsClient, Option<LastItem<DomainsFilter>>)> {
+) -> Result<impl DnsClient> {
     match config {
         Some(config) => {
             let domains_filter_stream = domains_filter::filters_stream(
@@ -189,10 +157,9 @@ fn create_ads_block_if_needed(
                 Some(data_dir.to_path_buf()),
             )?;
             let last_item = LastItem::new(domains_filter_stream);
-            let client = AdsBlockClient::new(client, last_item.clone());
-            Ok((Either::Left(client), Some(last_item)))
+            Ok(Either::Left(AdsBlockClient::new(client, last_item)))
         }
-        None => Ok((Either::Right(client), None)),
+        None => Ok(Either::Right(client)),
     }
 }
 
@@ -249,13 +216,11 @@ fn create_unblock_if_needed(
             );
             Ok(UnblockResult {
                 client: Either::Left(unblock_client),
-                blacklists: blacklist_last_items,
                 routed_snapshot,
             })
         }
         None => Ok(UnblockResult {
             client: Either::Right(client),
-            blacklists: vec![],
             routed_snapshot: Arc::new(ArcSwapOption::empty()),
         }),
     }
@@ -327,24 +292,27 @@ mod tests {
     use anyhow::Result;
     use bytes::Bytes;
     use http_body_util::Full;
-    use hyper::Response;
     use hyper::service::service_fn;
+    use hyper::Response;
     use hyper_util::rt::TokioIo;
     use tokio::net::TcpListener;
 
     use crate::{
         config::{AdsBlock, Retry, Unblock},
-        create_dns_client, DnsClientConfig,
+        create_dns_client,
         dns::{
             client::{DnsClient, UdpClient},
             message::Query,
         },
+        DnsClientConfig,
     };
 
     async fn router_http_stub() {
         let listener = TcpListener::bind("127.0.0.1:3030").await.unwrap();
         loop {
-            let Ok((stream, _)) = listener.accept().await else { continue };
+            let Ok((stream, _)) = listener.accept().await else {
+                continue;
+            };
             tokio::spawn(async move {
                 let _ = hyper::server::conn::http1::Builder::new()
                     .serve_connection(

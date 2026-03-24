@@ -4,10 +4,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 use futures_util::stream::Stream;
-use url::Url;
 use serde::de::{self, DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
 use serde::Deserialize;
 use tokio_stream::StreamExt;
+use url::Url;
 
 use crate::disk_blacklist::{DiskBlacklist, DiskBlacklistBuilder};
 use crate::files_stream::{create_files_stream, create_files_stream_to_disk};

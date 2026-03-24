@@ -15,11 +15,15 @@ use super::RouterClient;
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
 
 fn empty_body() -> BoxBody {
-    Empty::<Bytes>::new().map_err(|never| match never {}).boxed()
+    Empty::<Bytes>::new()
+        .map_err(|never| match never {})
+        .boxed()
 }
 
 fn string_body(s: String) -> BoxBody {
-    Full::new(Bytes::from(s)).map_err(|never| match never {}).boxed()
+    Full::new(Bytes::from(s))
+        .map_err(|never| match never {})
+        .boxed()
 }
 
 pub struct KeeneticClient {
@@ -34,7 +38,11 @@ impl KeeneticClient {
             .pool_max_idle_per_host(1)
             .pool_idle_timeout(Duration::from_secs(60))
             .build_http();
-        Self { http, base_url, vpn_interface }
+        Self {
+            http,
+            base_url,
+            vpn_interface,
+        }
     }
 
     async fn remove_route(&self, addr: Ipv4Addr) -> Result<()> {

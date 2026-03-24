@@ -51,13 +51,17 @@ impl Query {
 #[derive(Debug, Clone)]
 pub struct Response {
     response: Bytes,
+    trace: String,
 }
 
 impl Response {
     pub fn from_bytes(bytes: Bytes) -> Result<Self> {
         let header = Header::from_packet(&bytes)?;
         if matches!(header.flags.message_type, MessageType::Response) {
-            Ok(Self { response: bytes })
+            Ok(Self {
+                response: bytes,
+                trace: String::new(),
+            })
         } else {
             Err(anyhow!("Got dns query"))
         }
@@ -69,6 +73,17 @@ impl Response {
 
     pub fn bytes(&self) -> &Bytes {
         &self.response
+    }
+
+    pub fn trace(&self) -> &str {
+        &self.trace
+    }
+
+    pub fn append_trace(&mut self, s: &str) {
+        if !self.trace.is_empty() {
+            self.trace.push('\n');
+        }
+        self.trace.push_str(s);
     }
 }
 

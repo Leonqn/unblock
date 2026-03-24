@@ -31,7 +31,9 @@ where
         let cached_response = cache.get(&query.bytes().slice(2..))?;
         let mut response = BytesMut::from(cached_response.as_ref());
         response[0..2].copy_from_slice(&query.bytes()[0..2]);
-        Some(Response::from_bytes(response.freeze()).expect("Must be valid response"))
+        let mut response = Response::from_bytes(response.freeze()).expect("Must be valid response");
+        response.append_trace("cached");
+        Some(response)
     }
 
     fn insert_to_cache(&self, query: &Query, response: &Response) -> Result<()> {

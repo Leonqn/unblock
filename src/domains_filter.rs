@@ -12,8 +12,8 @@ use futures_util::stream::Stream;
 use log::{error, warn};
 use once_cell::sync::OnceCell;
 use regex::Regex;
-use url::Url;
 use tokio_stream::StreamExt;
+use url::Url;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct MatchResult<'a> {

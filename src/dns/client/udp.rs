@@ -25,6 +25,7 @@ use super::DnsClient;
 
 pub struct UdpClient {
     responses: UnboundedSender<Request>,
+    server_addr: SocketAddr,
 }
 
 impl UdpClient {
@@ -34,7 +35,10 @@ impl UdpClient {
         socket.connect(server_addr).await?;
         tokio::spawn(responses_handler(socket, rx));
 
-        Ok(Self { responses: tx })
+        Ok(Self {
+            responses: tx,
+            server_addr,
+        })
     }
 }
 
@@ -46,6 +50,7 @@ impl DnsClient for UdpClient {
             .send(Request {
                 query,
                 waiter: response_tx,
+                server_addr: self.server_addr,
             })
             .expect("Receiver dropped");
         response_rx.await.expect("Should always receive response")
@@ -56,6 +61,7 @@ impl DnsClient for UdpClient {
 struct Request {
     query: Query,
     waiter: oneshot::Sender<Result<Response>>,
+    server_addr: SocketAddr,
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
@@ -138,11 +144,12 @@ async fn process_request(
     }
 }
 
-fn process_response(waiting_requests: &mut HashMap<RequestId, Request>, response: Response) {
+fn process_response(waiting_requests: &mut HashMap<RequestId, Request>, mut response: Response) {
     let message = response.parse();
     match message {
         Ok(message) => {
             if let Some(request) = waiting_requests.remove(&RequestId::from_message(&message)) {
+                response.append_trace(&request.server_addr.to_string());
                 let _ = request.waiter.send(Ok(response));
             } else {
                 error!("Request from response {:?} missing", message);

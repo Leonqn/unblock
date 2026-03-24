@@ -86,7 +86,11 @@ async fn try_get_file(
             let new_etag = res.headers().get("Etag").cloned();
             let is_gzip = is_gzip_encoded(res.headers());
             let body = res.into_body().collect().await?.to_bytes();
-            let bytes = if is_gzip { decompress_gzip(body).await? } else { body };
+            let bytes = if is_gzip {
+                decompress_gzip(body).await?
+            } else {
+                body
+            };
             Ok(Some((new_etag, bytes)))
         }
         code => Err(anyhow!("unknown status code {}", code)),
@@ -162,7 +166,7 @@ async fn try_download_to_file(
 
                 let body_stream = BodyStream::new(res.into_body())
                     .try_filter_map(|frame| async move { Ok(frame.into_data().ok()) })
-                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e));
+                    .map_err(std::io::Error::other);
                 let reader = StreamReader::new(body_stream);
                 let mut decoder = Box::pin(GzipDecoder::new(BufReader::new(reader)));
                 tokio::io::copy(&mut decoder, &mut writer).await?;
