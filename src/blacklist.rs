@@ -41,12 +41,10 @@ pub fn rvzdata(
     data_dir: PathBuf,
 ) -> Result<impl Stream<Item = Box<dyn Blacklist>>> {
     let json_path = data_dir.join("rvzdata.json");
-    let bl_path = data_dir.join("rvzdata.bl");
     Ok(
         create_files_stream_to_disk(blacklist_url, update_interval, json_path.clone())?.filter_map(
             move |json_path| {
-                let bl_path = bl_path.clone();
-                let result = parse_json_dump_to_disk(&json_path, &bl_path);
+                let result = parse_json_dump_to_disk(&json_path, &data_dir);
                 // Remove JSON file after parsing — it's 93 MB and no longer needed.
                 // Frees disk space and page cache.
                 if let Err(e) = std::fs::remove_file(&json_path) {
@@ -67,10 +65,10 @@ pub fn rvzdata(
 /// Parse JSON dump from disk file, building a DiskBlacklist (sorted hash file).
 /// Uses streaming deserialization — processes one entry at a time, never holds full Vec.
 /// Peak memory: ~8 KB (BufReader buffer) + one entry (~100 bytes), steady state: ~0 MB (mmap).
-fn parse_json_dump_to_disk(json_path: &Path, bl_path: &Path) -> Result<DiskBlacklist> {
+fn parse_json_dump_to_disk(json_path: &Path, bl_dir: &Path) -> Result<DiskBlacklist> {
     let file = std::fs::File::open(json_path)?;
     let reader = BufReader::new(file);
-    let mut builder = DiskBlacklistBuilder::new(bl_path.to_path_buf())?;
+    let mut builder = DiskBlacklistBuilder::new(bl_dir)?;
 
     let mut deserializer = serde_json::Deserializer::from_reader(reader);
     let seed = DumpSeed {
@@ -194,11 +192,10 @@ mod test {
     fn json_parse_to_disk_test() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let json_path = dir.path().join("dump.json");
-        let bl_path = dir.path().join("dump.bl");
 
         std::fs::copy("test/dump.json", &json_path)?;
 
-        let bl = parse_json_dump_to_disk(&json_path, &bl_path)?;
+        let bl = parse_json_dump_to_disk(&json_path, dir.path())?;
 
         assert!(bl.contains("blocked.example.org"));
         assert!(bl.contains("www.blocked.example.com"));

@@ -79,8 +79,7 @@ impl DomainsFilter {
 
         let simple_block_disk = if !simple_domains.is_empty() {
             if let Some(dir) = data_dir {
-                let bl_path = dir.join("ads_block.bl");
-                match build_simple_disk_blacklist(&simple_domains, &bl_path) {
+                match build_simple_disk_blacklist(&simple_domains, dir) {
                     Ok(bl) => {
                         log::info!(
                             "Moved {} simple block rules to disk, {} complex rules in memory",
@@ -171,8 +170,8 @@ fn extract_simple_domain(rule: &str) -> Option<&str> {
     }
 }
 
-fn build_simple_disk_blacklist(rules: &[Rule], bl_path: &std::path::Path) -> Result<DiskBlacklist> {
-    let mut builder = DiskBlacklistBuilder::new(bl_path.to_path_buf())?;
+fn build_simple_disk_blacklist(rules: &[Rule], dir: &std::path::Path) -> Result<DiskBlacklist> {
+    let mut builder = DiskBlacklistBuilder::new(dir)?;
     for rule in rules {
         if let Some(domain) = extract_simple_domain(&rule.rule) {
             builder.add(domain)?;

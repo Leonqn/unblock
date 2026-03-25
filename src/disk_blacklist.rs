@@ -6,21 +6,36 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use memmap2::Mmap;
+use tempfile::NamedTempFile;
 
 /// A disk-based blacklist that stores domain hashes in a sorted mmap'd file.
 /// Lookups use binary search over sorted u64 hashes — O(log n), ~0 MB RSS.
 pub struct DiskBlacklist {
     mmap: Mmap,
     len: usize,
+    /// If set, the file at this path is deleted when the blacklist is dropped.
+    /// Used for temp files so they don't accumulate on disk.
+    owned_path: Option<PathBuf>,
+}
+
+impl Drop for DiskBlacklist {
+    fn drop(&mut self) {
+        if let Some(path) = self.owned_path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
 }
 
 impl DiskBlacklist {
-    /// Open an existing disk blacklist file.
-    pub fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path)?;
+    fn open_owned(path: PathBuf) -> Result<Self> {
+        let file = File::open(&path)?;
         let mmap = unsafe { Mmap::map(&file)? };
         let len = mmap.len() / std::mem::size_of::<u64>();
-        Ok(Self { mmap, len })
+        Ok(Self {
+            mmap,
+            len,
+            owned_path: Some(path),
+        })
     }
 
     /// Check if an exact domain is in the blacklist.
@@ -65,22 +80,19 @@ impl DiskBlacklist {
 unsafe impl Send for DiskBlacklist {}
 unsafe impl Sync for DiskBlacklist {}
 
-/// Builder that collects domain hashes and writes them sorted to a file.
+/// Builder that collects domain hashes and writes them sorted to a temp file.
+/// Uses a NamedTempFile so it never conflicts with a mmap held by a previous DiskBlacklist.
 pub struct DiskBlacklistBuilder {
-    path: PathBuf,
-    writer: BufWriter<File>,
+    writer: BufWriter<NamedTempFile>,
     count: usize,
 }
 
 impl DiskBlacklistBuilder {
-    pub fn new(path: PathBuf) -> Result<Self> {
-        let file = File::create(&path)?;
-        let writer = BufWriter::new(file);
-        Ok(Self {
-            path,
-            writer,
-            count: 0,
-        })
+    /// Create a new builder. `dir` is the directory where the temp file will be created.
+    pub fn new(dir: &Path) -> Result<Self> {
+        let temp = NamedTempFile::new_in(dir)?;
+        let writer = BufWriter::new(temp);
+        Ok(Self { writer, count: 0 })
     }
 
     /// Add a domain hash to the file (unsorted at this point).
@@ -93,12 +105,14 @@ impl DiskBlacklistBuilder {
 
     /// Finish building: flush, sort in-place via mmap, return DiskBlacklist.
     pub fn finish(self) -> Result<DiskBlacklist> {
-        drop(self.writer); // flush and close
+        let temp = self.writer.into_inner()?; // flush and get NamedTempFile back
 
         if self.count == 0 {
-            // Create empty blacklist
-            return DiskBlacklist::open(&self.path);
+            let (_, path) = temp.keep()?;
+            return DiskBlacklist::open_owned(path);
         }
+
+        let temp_path = temp.path().to_path_buf();
 
         // Sort hashes in-place using mmap, then deduplicate
         let deduped_len;
@@ -106,22 +120,22 @@ impl DiskBlacklistBuilder {
             let file = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)
-                .open(&self.path)?;
+                .open(&temp_path)?;
             let mut mmap = unsafe { memmap2::MmapMut::map_mut(&file)? };
             let ptr = mmap.as_mut_ptr() as *mut u64;
             let slice = unsafe { std::slice::from_raw_parts_mut(ptr, self.count) };
             slice.sort_unstable();
             deduped_len = dedup_sorted(slice);
             mmap.flush()?;
-            // Drop mmap and file before truncating — on Windows, set_len fails
-            // with OS error 1224 if the file still has a mapped section.
         }
         {
-            let file = std::fs::OpenOptions::new().write(true).open(&self.path)?;
+            let file = std::fs::OpenOptions::new().write(true).open(&temp_path)?;
             file.set_len((deduped_len * std::mem::size_of::<u64>()) as u64)?;
         }
 
-        DiskBlacklist::open(&self.path)
+        // Persist the temp file (prevent auto-deletion) and open as owned DiskBlacklist.
+        let (_, path) = temp.keep()?;
+        DiskBlacklist::open_owned(path)
     }
 }
 
@@ -154,9 +168,8 @@ mod tests {
     #[test]
     fn test_disk_blacklist_basic() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("test.bl");
 
-        let mut builder = DiskBlacklistBuilder::new(path.clone())?;
+        let mut builder = DiskBlacklistBuilder::new(dir.path())?;
         builder.add("example.com")?;
         builder.add("blocked.org")?;
         builder.add("test.net")?;
@@ -174,9 +187,8 @@ mod tests {
     #[test]
     fn test_disk_blacklist_case_insensitive() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("test.bl");
 
-        let mut builder = DiskBlacklistBuilder::new(path.clone())?;
+        let mut builder = DiskBlacklistBuilder::new(dir.path())?;
         builder.add("Example.COM")?;
         let bl = builder.finish()?;
 
@@ -190,9 +202,8 @@ mod tests {
     #[test]
     fn test_disk_blacklist_empty() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("test.bl");
 
-        let builder = DiskBlacklistBuilder::new(path.clone())?;
+        let builder = DiskBlacklistBuilder::new(dir.path())?;
         let bl = builder.finish()?;
 
         assert!(!bl.contains("anything"));
@@ -203,18 +214,15 @@ mod tests {
     #[test]
     fn test_disk_blacklist_duplicates() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("test.bl");
 
-        let mut builder = DiskBlacklistBuilder::new(path.clone())?;
+        let mut builder = DiskBlacklistBuilder::new(dir.path())?;
         builder.add("example.com")?;
         builder.add("example.com")?;
         builder.add("example.com")?;
         let bl = builder.finish()?;
 
         assert!(bl.contains("example.com"));
-        // File should be smaller due to dedup
-        let meta = std::fs::metadata(&path)?;
-        assert_eq!(meta.len(), 8); // single u64
+        assert_eq!(bl.len, 1); // single entry after dedup
 
         Ok(())
     }
