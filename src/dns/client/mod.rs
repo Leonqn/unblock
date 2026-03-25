@@ -12,6 +12,7 @@ mod domain_routing;
 mod either;
 mod retry;
 mod round_robin;
+mod stats;
 mod udp;
 mod unblock;
 
@@ -24,6 +25,7 @@ pub use domain_routing::*;
 pub use either::*;
 pub use retry::*;
 pub use round_robin::*;
+pub use stats::*;
 pub use udp::*;
 pub use unblock::*;
 

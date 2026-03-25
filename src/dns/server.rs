@@ -27,12 +27,13 @@ where
             let accept_result = listener.accept().await;
             let request_handler = request_handler.clone();
             let handle_request = async move {
-                let (mut socket, _) = accept_result?;
+                let (mut socket, addr) = accept_result?;
                 let packet_len = socket.read_u16().await?;
                 let mut buf = vec![0; packet_len as usize];
                 socket.read_exact(&mut buf).await?;
                 let bytes = Bytes::copy_from_slice(&buf);
-                let query = Query::from_bytes(bytes)?;
+                let mut query = Query::from_bytes(bytes)?;
+                query.set_sender(addr.ip());
                 let response = request_handler(query).await?;
                 socket.write_u16(response.bytes().len() as u16).await?;
                 socket.write_all(response.bytes()).await?;
@@ -63,7 +64,8 @@ where
             let request = requests.next().await.expect("Should be infinite");
             let handler = || {
                 let (sender, request) = request?;
-                let query = Query::from_bytes(request)?;
+                let mut query = Query::from_bytes(request)?;
+                query.set_sender(sender.ip());
                 let handler_fut = request_handler(query);
                 let socket = socket.clone();
                 tokio::spawn(async move {

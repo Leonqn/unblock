@@ -11,7 +11,7 @@ use anyhow::Result;
 use arc_swap::ArcSwapOption;
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, DomainRoutingClient, Either,
-    RetryClient, RoundRobinClient, UdpClient, UnblockClient,
+    RetryClient, RoundRobinClient, StatsClient, UdpClient, UnblockClient,
 };
 use domains_filter::DomainsFilter;
 use futures_util::{stream, StreamExt};
@@ -19,6 +19,7 @@ use last_item::LastItem;
 use log::info;
 use prefix_tree::PrefixTree;
 use routers::KeeneticClient;
+use stats::StatsCollector;
 use unblock::Unblocker;
 use url::Url;
 
@@ -32,6 +33,7 @@ mod files_stream;
 mod last_item;
 mod prefix_tree;
 mod routers;
+mod stats;
 mod unblock;
 mod web;
 
@@ -43,6 +45,8 @@ async fn main() -> Result<()> {
 
     let data_dir = PathBuf::from(&config.data_dir);
     std::fs::create_dir_all(&data_dir)?;
+
+    let stats_collector = Arc::new(StatsCollector::new(data_dir.join("stats.json")).await);
 
     let (dns_pipeline, app_state) = create_dns_client(DnsClientConfig {
         doh_upstreams: config.doh_upstreams,
@@ -56,15 +60,29 @@ async fn main() -> Result<()> {
     })
     .await?;
 
+    let dns_pipeline = StatsClient::new(dns_pipeline, stats_collector.clone());
     let dns_pipeline: Arc<dyn DnsClient> = Arc::new(dns_pipeline);
+
     let app_state = Arc::new(AppState {
         routed_snapshot: app_state.routed_snapshot,
         dns_pipeline: dns_pipeline.clone(),
+        stats_collector: stats_collector.clone(),
     });
 
     let web_bind_addr = config.web_bind_addr.or(config.metrics_bind_addr);
     let web_service =
         web_bind_addr.map(|addr| tokio::spawn(web::start_web_server(addr, app_state)));
+
+    {
+        let stats = stats_collector.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+            loop {
+                interval.tick().await;
+                stats.save_to_disk().await;
+            }
+        });
+    }
 
     let request_handler = move |query| {
         let dns_pipeline = dns_pipeline.clone();

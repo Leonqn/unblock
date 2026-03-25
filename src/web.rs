@@ -15,6 +15,7 @@ use tokio::net::TcpListener;
 
 use crate::{
     dns::{client::DnsClient, message::Query},
+    stats::StatsCollector,
     unblock::RoutedEntry,
 };
 
@@ -23,12 +24,28 @@ const INDEX_HTML: &str = include_str!("../static/index.html");
 pub struct AppState {
     pub routed_snapshot: Arc<ArcSwapOption<Vec<RoutedEntry>>>,
     pub dns_pipeline: Arc<dyn DnsClient>,
+    pub stats_collector: Arc<StatsCollector>,
 }
 
 #[derive(Serialize)]
 struct LookupResult {
     domain: String,
     ips: Vec<String>,
+    trace: String,
+}
+
+#[derive(Serialize)]
+struct StatsEntry {
+    ip: String,
+    total_queries: u64,
+    top_domains: Vec<(String, u64)>,
+    recent: Vec<StatsRecentEntry>,
+}
+
+#[derive(Serialize)]
+struct StatsRecentEntry {
+    domain: String,
+    timestamp: u64,
     trace: String,
 }
 
@@ -122,6 +139,41 @@ async fn handle_request(
                 },
                 entries.len()
             );
+            json_response(&entries)
+        }
+        (&Method::GET, "/api/stats") => {
+            let ip_filter = parse_query_param(&query_str, "ip");
+            let top_n: usize = parse_query_param(&query_str, "top")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(10);
+            let snapshot = state.stats_collector.snapshot();
+            let entries: Vec<StatsEntry> = snapshot
+                .per_ip
+                .into_iter()
+                .filter(|(ip, _)| ip_filter.as_ref().is_none_or(|f| ip.to_string() == *f))
+                .map(|(ip, stats)| {
+                    let total_queries: u64 = stats.domain_counts.values().sum();
+                    let mut top_domains: Vec<(String, u64)> =
+                        stats.domain_counts.into_iter().collect();
+                    top_domains.sort_by(|a, b| b.1.cmp(&a.1));
+                    top_domains.truncate(top_n);
+                    let recent = stats
+                        .recent_requests
+                        .into_iter()
+                        .map(|r| StatsRecentEntry {
+                            domain: r.domain,
+                            timestamp: r.timestamp,
+                            trace: r.trace,
+                        })
+                        .collect();
+                    StatsEntry {
+                        ip: ip.to_string(),
+                        total_queries,
+                        top_domains,
+                        recent,
+                    }
+                })
+                .collect();
             json_response(&entries)
         }
         (&Method::GET, "/api/lookup") => {

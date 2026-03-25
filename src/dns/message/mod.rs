@@ -1,19 +1,27 @@
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use std::{convert::TryFrom, net::Ipv4Addr, time::Duration};
+use std::{
+    convert::TryFrom,
+    net::{IpAddr, Ipv4Addr},
+    time::Duration,
+};
 
 mod parsers;
 
 #[derive(Debug, Clone)]
 pub struct Query {
     request: Bytes,
+    sender: Option<IpAddr>,
 }
 
 impl Query {
     pub fn from_bytes(bytes: Bytes) -> Result<Self> {
         let header = Header::from_packet(&bytes)?;
         if matches!(header.flags.message_type, MessageType::Query) {
-            Ok(Self { request: bytes })
+            Ok(Self {
+                request: bytes,
+                sender: None,
+            })
         } else {
             Err(anyhow!("Got dns response"))
         }
@@ -36,7 +44,16 @@ impl Query {
         buf.extend_from_slice(&[0x00, 0x01]); // QCLASS = IN
         Self {
             request: Bytes::from(buf),
+            sender: None,
         }
+    }
+
+    pub fn set_sender(&mut self, sender: IpAddr) {
+        self.sender = Some(sender);
+    }
+
+    pub fn sender(&self) -> Option<IpAddr> {
+        self.sender
     }
 
     pub fn parse(&self) -> Result<Message<'_>> {

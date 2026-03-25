@@ -35,6 +35,7 @@ th { color: #e94560; font-weight: 600; }
 <div class="tabs">
   <button class="tab active" onclick="showTab('routed')">Routed</button>
   <button class="tab" onclick="showTab('lookup')">DNS Lookup</button>
+  <button class="tab" onclick="showTab('stats')">Stats</button>
 </div>
 
 <div id="routed" class="panel active">
@@ -47,6 +48,37 @@ th { color: #e94560; font-weight: 600; }
     <tbody id="routed-body"></tbody>
   </table>
   <div id="routed-empty" class="empty" style="display:none">No routed IPs</div>
+</div>
+
+<div id="stats" class="panel">
+  <h2>DNS Stats</h2>
+  <div class="form-row">
+    <input type="text" id="stats-filter" placeholder="Filter by IP..." oninput="renderStats()">
+  </div>
+  <table>
+    <thead><tr><th>IP</th><th>Queries</th><th>Top Domain</th></tr></thead>
+    <tbody id="stats-body"></tbody>
+  </table>
+  <div id="stats-empty" class="empty" style="display:none">No stats yet</div>
+  <div id="stats-detail" style="display:none">
+    <h2 style="margin-top:20px">Details: <span id="stats-detail-ip"></span></h2>
+    <div style="display:flex;gap:20px;flex-wrap:wrap">
+      <div style="flex:1;min-width:300px">
+        <h3 style="color:#e94560;font-size:14px;margin:10px 0">Top Domains</h3>
+        <table>
+          <thead><tr><th>Domain</th><th>Count</th></tr></thead>
+          <tbody id="stats-domains-body"></tbody>
+        </table>
+      </div>
+      <div style="flex:1;min-width:300px">
+        <h3 style="color:#e94560;font-size:14px;margin:10px 0">Last 10 Requests</h3>
+        <table>
+          <thead><tr><th>Time</th><th>Domain</th><th>Trace</th></tr></thead>
+          <tbody id="stats-recent-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="lookup" class="panel">
@@ -98,6 +130,68 @@ function renderRouted() {
 
 setInterval(loadRouted, 5000);
 loadRouted();
+
+// --- Stats ---
+let statsData = [];
+
+async function loadStats() {
+  try {
+    const r = await fetch('/api/stats');
+    statsData = await r.json();
+    renderStats();
+  } catch(e) {}
+}
+
+function renderStats() {
+  const filter = document.getElementById('stats-filter').value.toLowerCase();
+  const filtered = statsData.filter(e => e.ip.includes(filter));
+  const tbody = document.getElementById('stats-body');
+  const empty = document.getElementById('stats-empty');
+  if (filtered.length === 0) {
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  filtered.sort((a, b) => b.total_queries - a.total_queries);
+  tbody.innerHTML = filtered.map(e => {
+    const topDomain = e.top_domains.length ? e.top_domains[0][0] : '-';
+    return '<tr style="cursor:pointer" onclick="showIpDetail(\'' + esc(e.ip) + '\')">'
+      + '<td>' + esc(e.ip) + '</td>'
+      + '<td>' + e.total_queries + '</td>'
+      + '<td>' + esc(topDomain) + '</td>'
+      + '</tr>';
+  }).join('');
+}
+
+async function showIpDetail(ip) {
+  const detail = document.getElementById('stats-detail');
+  detail.style.display = 'block';
+  document.getElementById('stats-detail-ip').textContent = ip;
+  document.getElementById('stats-domains-body').innerHTML = '<tr><td colspan="2">Loading...</td></tr>';
+
+  try {
+    const r = await fetch('/api/stats?ip=' + encodeURIComponent(ip) + '&top=1000');
+    const data = await r.json();
+    const entry = data.find(e => e.ip === ip);
+    if (!entry) return;
+
+    document.getElementById('stats-domains-body').innerHTML = entry.top_domains.map(d =>
+      '<tr><td>' + esc(d[0]) + '</td><td>' + d[1] + '</td></tr>'
+    ).join('');
+
+    document.getElementById('stats-recent-body').innerHTML = entry.recent.slice().reverse().map(r => {
+      const t = new Date(r.timestamp * 1000);
+      const time = t.toLocaleTimeString() + ' ' + t.toLocaleDateString();
+      return '<tr><td style="white-space:nowrap">' + esc(time) + '</td>'
+        + '<td>' + esc(r.domain) + '</td>'
+        + '<td><code style="color:#888;font-size:12px">' + esc(r.trace) + '</code></td></tr>';
+    }).join('');
+  } catch(e) {}
+}
+
+setInterval(loadStats, 10000);
+loadStats();
 
 // --- DNS Lookup ---
 async function doLookup() {
