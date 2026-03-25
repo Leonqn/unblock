@@ -27,21 +27,34 @@ pub fn filters_stream(
     manual_rules: Vec<String>,
     data_dir: Option<PathBuf>,
 ) -> Result<impl Stream<Item = DomainsFilter>> {
-    Ok(
-        create_files_stream(filter_url, update_interval)?.filter_map(move |filter| {
-            let manual_rules = manual_rules.join("\n");
-            let domains_filter = std::str::from_utf8(filter.as_ref())
-                .map_err(anyhow::Error::from)
-                .and_then(|rules| DomainsFilter::new(&(manual_rules + rules), data_dir.as_deref()));
-            match domains_filter {
-                Ok(filter) => Some(filter),
-                Err(err) => {
-                    error!("Failed to create filter. Err: {:#}", err);
-                    None
+    Ok(create_files_stream(filter_url, update_interval)?
+        .then(move |filter| {
+            let manual_rules = manual_rules.clone();
+            let data_dir = data_dir.clone();
+            async move {
+                let result = tokio::task::spawn_blocking(move || {
+                    let manual_rules = manual_rules.join("\n");
+                    std::str::from_utf8(filter.as_ref())
+                        .map_err(anyhow::Error::from)
+                        .and_then(|rules| {
+                            DomainsFilter::new(&(manual_rules + rules), data_dir.as_deref())
+                        })
+                })
+                .await;
+                match result {
+                    Ok(Ok(filter)) => Some(filter),
+                    Ok(Err(err)) => {
+                        error!("Failed to create filter. Err: {:#}", err);
+                        None
+                    }
+                    Err(err) => {
+                        error!("spawn_blocking panicked: {:#}", err);
+                        None
+                    }
                 }
             }
-        }),
-    )
+        })
+        .filter_map(|x| x))
 }
 
 pub struct DomainsFilter {

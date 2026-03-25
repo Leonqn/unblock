@@ -42,23 +42,33 @@ pub fn rvzdata(
 ) -> Result<impl Stream<Item = Box<dyn Blacklist>>> {
     let json_path = data_dir.join("rvzdata.json");
     Ok(
-        create_files_stream_to_disk(blacklist_url, update_interval, json_path.clone())?.filter_map(
-            move |json_path| {
-                let result = parse_json_dump_to_disk(&json_path, &data_dir);
-                // Remove JSON file after parsing — it's 93 MB and no longer needed.
-                // Frees disk space and page cache.
-                if let Err(e) = std::fs::remove_file(&json_path) {
-                    log::warn!("Failed to remove temp JSON file: {:#}", e);
-                }
-                match result {
-                    Ok(bl) => Some(Box::new(bl) as Box<dyn Blacklist>),
-                    Err(err) => {
-                        log::error!("Error occurred while parsing blacklist: {:#}", err);
-                        None
+        create_files_stream_to_disk(blacklist_url, update_interval, json_path.clone())?
+            .then(move |json_path| {
+                let data_dir = data_dir.clone();
+                async move {
+                    let jp = json_path.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        parse_json_dump_to_disk(&jp, &data_dir)
+                    })
+                    .await;
+                    // Remove JSON file after parsing — it's 93 MB and no longer needed.
+                    if let Err(e) = tokio::fs::remove_file(&json_path).await {
+                        log::warn!("Failed to remove temp JSON file: {:#}", e);
+                    }
+                    match result {
+                        Ok(Ok(bl)) => Some(Box::new(bl) as Box<dyn Blacklist>),
+                        Ok(Err(err)) => {
+                            log::error!("Error occurred while parsing blacklist: {:#}", err);
+                            None
+                        }
+                        Err(err) => {
+                            log::error!("spawn_blocking panicked: {:#}", err);
+                            None
+                        }
                     }
                 }
-            },
-        ),
+            })
+            .filter_map(|x| x),
     )
 }
 
@@ -158,17 +168,22 @@ pub fn inside_raw(
     blacklist_url: Url,
     update_interval: Duration,
 ) -> Result<impl Stream<Item = Box<dyn Blacklist>>> {
-    Ok(
-        create_files_stream(blacklist_url, update_interval)?.filter_map(
-            |dump| match parse_text_dump(&dump) {
-                Ok(tree) => Some(Box::new(tree) as Box<dyn Blacklist>),
-                Err(err) => {
+    Ok(create_files_stream(blacklist_url, update_interval)?
+        .then(|dump| async move {
+            let result = tokio::task::spawn_blocking(move || parse_text_dump(&dump)).await;
+            match result {
+                Ok(Ok(tree)) => Some(Box::new(tree) as Box<dyn Blacklist>),
+                Ok(Err(err)) => {
                     log::error!("Error occurred while parsing text blacklist: {:#}", err);
                     None
                 }
-            },
-        ),
-    )
+                Err(err) => {
+                    log::error!("spawn_blocking panicked: {:#}", err);
+                    None
+                }
+            }
+        })
+        .filter_map(|x| x))
 }
 
 fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
