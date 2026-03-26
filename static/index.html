@@ -63,6 +63,10 @@ th { color: #e94560; font-weight: 600; }
   <div id="stats-empty" class="empty" style="display:none">No stats yet</div>
   <div id="stats-detail" style="display:none">
     <h2 style="margin-top:20px">Details: <span id="stats-detail-ip"></span></h2>
+    <div class="form-row" style="margin-top:10px">
+      <span style="color:#888;font-size:13px;padding:8px 0">Top N domains:</span>
+      <input type="number" id="stats-top-n" value="100" min="1" max="10000" style="width:80px;background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px;border-radius:4px;font-size:14px" onchange="reloadDetail()">
+    </div>
     <div style="display:flex;gap:20px;flex-wrap:wrap">
       <div style="flex:1;min-width:300px">
         <h3 style="color:#e94560;font-size:14px;margin:10px 0">Top Domains</h3>
@@ -189,14 +193,30 @@ function renderStats() {
   }).join('');
 }
 
+let currentDetailIp = '';
+
 async function showIpDetail(ip) {
+  currentDetailIp = ip;
+  document.getElementById('stats-filter').value = ip;
+  renderStats();
+
   const detail = document.getElementById('stats-detail');
   detail.style.display = 'block';
   document.getElementById('stats-detail-ip').textContent = ip;
+  await fetchDetail();
+}
+
+function reloadDetail() {
+  if (currentDetailIp) fetchDetail();
+}
+
+async function fetchDetail() {
+  const ip = currentDetailIp;
+  const topN = document.getElementById('stats-top-n').value || 100;
   document.getElementById('stats-domains-body').innerHTML = '<tr><td colspan="2">Loading...</td></tr>';
 
   try {
-    let url = '/api/stats?ip=' + encodeURIComponent(ip) + '&top=1000';
+    let url = '/api/stats?ip=' + encodeURIComponent(ip) + '&top=' + topN;
     if (statsCurrentDate) url += '&date=' + encodeURIComponent(statsCurrentDate);
     const r = await fetch(url);
     const data = await r.json();
