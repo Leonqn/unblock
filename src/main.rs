@@ -46,7 +46,16 @@ async fn main() -> Result<()> {
     let data_dir = PathBuf::from(&config.data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
-    let stats_collector = Arc::new(StatsCollector::new(data_dir.join("stats.json")).await);
+    let router_for_stats: Option<Arc<KeeneticClient>> = config.unblock.as_ref().and_then(|u| {
+        let url = u.router_api_uri.parse().ok()?;
+        Some(Arc::new(KeeneticClient::new(
+            url,
+            u.route_interface.clone(),
+        )))
+    });
+
+    let stats_collector =
+        Arc::new(StatsCollector::new(data_dir.join("stats"), router_for_stats).await);
 
     let (dns_pipeline, app_state) = create_dns_client(DnsClientConfig {
         doh_upstreams: config.doh_upstreams,

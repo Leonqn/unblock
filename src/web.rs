@@ -37,6 +37,8 @@ struct LookupResult {
 #[derive(Serialize)]
 struct StatsEntry {
     ip: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    device_name: Option<String>,
     total_queries: u64,
     top_domains: Vec<(String, u64)>,
     recent: Vec<StatsRecentEntry>,
@@ -141,12 +143,27 @@ async fn handle_request(
             );
             json_response(&entries)
         }
+        (&Method::GET, "/api/stats/dates") => {
+            let mut dates = state.stats_collector.available_dates().await;
+            let current = state.stats_collector.current_date();
+            if !dates.contains(&current) {
+                dates.insert(0, current);
+            }
+            json_response(&dates)
+        }
         (&Method::GET, "/api/stats") => {
             let ip_filter = parse_query_param(&query_str, "ip");
+            let date = parse_query_param(&query_str, "date");
             let top_n: usize = parse_query_param(&query_str, "top")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10);
-            let snapshot = state.stats_collector.snapshot();
+            let snapshot = match &date {
+                Some(d) if *d != state.stats_collector.current_date() => {
+                    state.stats_collector.load_date(d).await
+                }
+                _ => state.stats_collector.snapshot(),
+            };
+            let devices = state.stats_collector.devices();
             let entries: Vec<StatsEntry> = snapshot
                 .per_ip
                 .into_iter()
@@ -166,8 +183,10 @@ async fn handle_request(
                             trace: r.trace,
                         })
                         .collect();
+                    let device_name = devices.get(&ip).cloned();
                     StatsEntry {
                         ip: ip.to_string(),
+                        device_name,
                         total_queries,
                         top_domains,
                         recent,

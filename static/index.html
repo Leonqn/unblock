@@ -51,12 +51,13 @@ th { color: #e94560; font-weight: 600; }
 </div>
 
 <div id="stats" class="panel">
-  <h2>DNS Stats</h2>
+  <h2>DNS Stats <span id="stats-date-label" class="count"></span></h2>
   <div class="form-row">
+    <select id="stats-date" onchange="onDateChange()" style="background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px 12px;border-radius:4px;font-size:14px"></select>
     <input type="text" id="stats-filter" placeholder="Filter by IP..." oninput="renderStats()">
   </div>
   <table>
-    <thead><tr><th>IP</th><th>Queries</th><th>Top Domain</th></tr></thead>
+    <thead><tr><th>IP</th><th>Device</th><th>Queries</th><th>Top Domain</th></tr></thead>
     <tbody id="stats-body"></tbody>
   </table>
   <div id="stats-empty" class="empty" style="display:none">No stats yet</div>
@@ -133,10 +134,33 @@ loadRouted();
 
 // --- Stats ---
 let statsData = [];
+let statsCurrentDate = '';
+
+async function loadDates() {
+  try {
+    const r = await fetch('/api/stats/dates');
+    const dates = await r.json();
+    const select = document.getElementById('stats-date');
+    const prev = select.value;
+    select.innerHTML = dates.map((d, i) =>
+      '<option value="' + esc(d) + '"' + (i === 0 ? ' selected' : '') + '>' + esc(d) + (i === 0 ? ' (today)' : '') + '</option>'
+    ).join('');
+    if (prev && dates.includes(prev)) select.value = prev;
+    statsCurrentDate = select.value;
+  } catch(e) {}
+}
+
+async function onDateChange() {
+  statsCurrentDate = document.getElementById('stats-date').value;
+  document.getElementById('stats-detail').style.display = 'none';
+  await loadStats();
+}
 
 async function loadStats() {
   try {
-    const r = await fetch('/api/stats');
+    let url = '/api/stats';
+    if (statsCurrentDate) url += '?date=' + encodeURIComponent(statsCurrentDate);
+    const r = await fetch(url);
     statsData = await r.json();
     renderStats();
   } catch(e) {}
@@ -158,6 +182,7 @@ function renderStats() {
     const topDomain = e.top_domains.length ? e.top_domains[0][0] : '-';
     return '<tr style="cursor:pointer" onclick="showIpDetail(\'' + esc(e.ip) + '\')">'
       + '<td>' + esc(e.ip) + '</td>'
+      + '<td>' + esc(e.device_name || '') + '</td>'
       + '<td>' + e.total_queries + '</td>'
       + '<td>' + esc(topDomain) + '</td>'
       + '</tr>';
@@ -171,7 +196,9 @@ async function showIpDetail(ip) {
   document.getElementById('stats-domains-body').innerHTML = '<tr><td colspan="2">Loading...</td></tr>';
 
   try {
-    const r = await fetch('/api/stats?ip=' + encodeURIComponent(ip) + '&top=1000');
+    let url = '/api/stats?ip=' + encodeURIComponent(ip) + '&top=1000';
+    if (statsCurrentDate) url += '&date=' + encodeURIComponent(statsCurrentDate);
+    const r = await fetch(url);
     const data = await r.json();
     const entry = data.find(e => e.ip === ip);
     if (!entry) return;
@@ -190,8 +217,8 @@ async function showIpDetail(ip) {
   } catch(e) {}
 }
 
+loadDates().then(() => loadStats());
 setInterval(loadStats, 10000);
-loadStats();
 
 // --- DNS Lookup ---
 async function doLookup() {

@@ -27,7 +27,8 @@ impl<C: DnsClient> DnsClient for StatsClient<C> {
         let response = self.dns_client.send(query).await?;
         if let (Some(sender), Some(domain)) = (sender, domain) {
             self.stats
-                .record(sender, domain, response.trace().to_owned());
+                .record(sender, domain, response.trace().to_owned())
+                .await;
         }
         Ok(response)
     }

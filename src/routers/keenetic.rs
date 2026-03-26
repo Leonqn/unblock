@@ -1,4 +1,6 @@
-use std::{net::Ipv4Addr, time::Duration};
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -62,6 +64,41 @@ impl KeeneticClient {
             comment = comment,
         );
         self.send_rci(request_body).await
+    }
+
+    pub async fn get_hotspot(&self) -> Result<HashMap<IpAddr, String>> {
+        let uri = self.base_url.join("/rci/")?.to_string();
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(&uri)
+            .body(string_body(
+                r#"[{"show":{"ip":{"hotspot":{}}}}]"#.to_owned(),
+            ))?;
+        let res = self.http.request(req).await?;
+        let body = res.into_body().collect().await?.to_bytes();
+        let responses: Vec<HotspotResponse> = serde_json::from_slice(&body)?;
+        let mut devices = HashMap::new();
+        for resp in responses {
+            let Some(show) = resp.show else {
+                continue;
+            };
+            let Some(ip) = show.ip else { continue };
+            let Some(hotspot) = ip.hotspot else {
+                continue;
+            };
+            for host in hotspot.host {
+                let Some(ip) = host.ip else { continue };
+                let name = if !host.hostname.is_empty() {
+                    host.hostname
+                } else if !host.name.is_empty() {
+                    host.name
+                } else {
+                    continue;
+                };
+                devices.insert(ip, name);
+            }
+        }
+        Ok(devices)
     }
 
     async fn send_rci(&self, request_body: String) -> Result<()> {
@@ -134,4 +171,34 @@ struct Route {
     host: Option<Ipv4Addr>,
     interface: String,
     comment: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct HotspotResponse {
+    show: Option<HotspotShow>,
+}
+
+#[derive(Deserialize)]
+struct HotspotShow {
+    ip: Option<HotspotIp>,
+}
+
+#[derive(Deserialize)]
+struct HotspotIp {
+    hotspot: Option<HotspotData>,
+}
+
+#[derive(Deserialize)]
+struct HotspotData {
+    #[serde(default)]
+    host: Vec<HotspotHost>,
+}
+
+#[derive(Deserialize)]
+struct HotspotHost {
+    ip: Option<IpAddr>,
+    #[serde(default)]
+    hostname: String,
+    #[serde(default)]
+    name: String,
 }
