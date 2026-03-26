@@ -1,5 +1,5 @@
 bind_addr: 0.0.0.0:1153
-metrics_bind_addr: 0.0.0.0:8082
+web_bind_addr: 0.0.0.0:8082
 udp_dns_upstream: 8.8.8.8:53
 doh_upstreams:
   - https://dns.google/dns-query
@@ -9,15 +9,15 @@ dns_routing:
   - domains: ["*.ru", "*.xn--p1ai"]
     doh_upstreams:
       - https://common.dot.dns.yandex.net/dns-query
-# unblock:
-#  rvzdata_url: https://raw.githubusercontent.com/fz139/blocked-domains-resolves/refs/heads/main/rvzdata.json
-#  inside_raw_url: https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Russia/inside-raw.lst
-#  blacklist_update_interval: 60 minutes
-#  router_api_uri: http://192.168.1.1:8888
-#  route_interface: Wireguard0
-#  route_ttl: 24 hours
-#  manual_whitelist_dns:
-#    - "||linkedin.com"
+unblock:
+ rvzdata_url: https://raw.githubusercontent.com/fz139/blocked-domains-resolves/refs/heads/main/rvzdata.json
+ inside_raw_url: https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Russia/inside-raw.lst
+ blacklist_update_interval: 60 minutes
+ router_api_uri: http://127.0.0.1:79
+ route_interface: Wireguard0
+ route_ttl: 24 hours
+ manual_whitelist_dns:
+   - "||linkedin.com"
 ads_block:
  filter_uri: https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
  filter_update_interval: 60 minutes
@@ -27,6 +27,5 @@ ads_block:
 retry:
   attempts_count: 3
   next_attempt_delay: 200 millis
-web_bind_addr: 0.0.0.0:8082  # web UI + metrics (optional, falls back to metrics_bind_addr)
 data_dir: ./cache  # directory for disk-based blacklists and filters (default: /tmp/unblock)
 # cache_max_size: 500      # max DNS cache entries (default: unlimited)
