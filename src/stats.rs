@@ -78,10 +78,14 @@ impl StatsCollector {
                 date
             );
         }
+        let devices = match &router {
+            Some(r) => r.get_hotspot().await.unwrap_or_default(),
+            None => HashMap::new(),
+        };
         Self {
             inner: Arc::new(Mutex::new(Inner { data, date })),
             stats_dir,
-            devices: Arc::new(Mutex::new(HashMap::new())),
+            devices: Arc::new(Mutex::new(devices)),
             router,
         }
     }
