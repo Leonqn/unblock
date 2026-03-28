@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use std::{
     convert::TryFrom,
     net::{IpAddr, Ipv4Addr},
@@ -62,6 +62,36 @@ impl Query {
 
     pub fn bytes(&self) -> &Bytes {
         &self.request
+    }
+
+    /// Returns a copy of the query with an EDNS Client Subnet opt-out (0.0.0.0/0).
+    /// This tells recursive resolvers not to forward client subnet information.
+    /// Only adds the OPT record if the query doesn't already have additional records.
+    pub fn with_ecs_optout(&self) -> Query {
+        let bytes = &self.request;
+        let arcount = u16::from_be_bytes([bytes[10], bytes[11]]);
+        if arcount > 0 {
+            return self.clone();
+        }
+        let mut buf = BytesMut::from(bytes.as_ref());
+        buf[10..12].copy_from_slice(&1u16.to_be_bytes());
+        // OPT record with ECS 0.0.0.0/0
+        buf.extend_from_slice(&[
+            0x00, // Name: root
+            0x00, 0x29, // Type: OPT (41)
+            0x10, 0x00, // UDP payload size: 4096
+            0x00, 0x00, 0x00, 0x00, // Extended RCODE + flags
+            0x00, 0x08, // RDLENGTH: 8
+            0x00, 0x08, // Option code: EDNS Client Subnet (8)
+            0x00, 0x04, // Option length: 4
+            0x00, 0x01, // Family: IPv4
+            0x00, // Source prefix-length: 0
+            0x00, // Scope prefix-length: 0
+        ]);
+        Query {
+            request: buf.freeze(),
+            sender: self.sender,
+        }
     }
 }
 

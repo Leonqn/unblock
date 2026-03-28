@@ -1,3 +1,4 @@
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -9,11 +10,14 @@ use hyper::Request;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::{connect::HttpConnector, Client};
 use hyper_util::rt::TokioExecutor;
+use log::info;
 use url::Url;
 
 use crate::dns::message::{Query, Response};
 
 use super::DnsClient;
+
+const LOOPBACK: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
 
 pub struct DohClient {
     http_client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Empty<Bytes>>,
@@ -37,11 +41,8 @@ impl DohClient {
             server_url,
         })
     }
-}
 
-#[async_trait]
-impl DnsClient for DohClient {
-    async fn send(&self, query: Query) -> Result<Response> {
+    async fn do_request(&self, query: &Query) -> Result<Response> {
         let encoded = URL_SAFE_NO_PAD.encode(query.bytes().as_ref());
         let mut url = self.server_url.clone();
         url.query_pairs_mut().append_pair("dns", &encoded);
@@ -59,6 +60,32 @@ impl DnsClient for DohClient {
         let body = res.into_body().collect().await?.to_bytes();
         let mut response = Response::from_bytes(body)?;
         response.append_trace(self.server_url.as_str());
+        Ok(response)
+    }
+
+    fn has_loopback(response: &Response) -> bool {
+        response
+            .parse()
+            .map(|msg| msg.ips().any(|ip| ip == LOOPBACK))
+            .unwrap_or(false)
+    }
+}
+
+#[async_trait]
+impl DnsClient for DohClient {
+    async fn send(&self, query: Query) -> Result<Response> {
+        let response = self.do_request(&query).await?;
+        if Self::has_loopback(&response) {
+            let domains = query
+                .parse()
+                .map(|m| m.domains().collect::<Vec<_>>().join(", "))
+                .unwrap_or_default();
+            info!("Got 127.0.0.1 for {}, retrying with ECS opt-out", domains);
+            let query_no_ecs = query.with_ecs_optout();
+            let mut retry_response = self.do_request(&query_no_ecs).await?;
+            retry_response.append_trace("ecs-optout-retry");
+            return Ok(retry_response);
+        }
         Ok(response)
     }
 }
