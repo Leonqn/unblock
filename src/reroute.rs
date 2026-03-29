@@ -20,12 +20,12 @@ use tokio::{
 };
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum UnblockResponse {
-    Unblocked(Vec<Ipv4Addr>),
+pub enum RerouteResponse {
+    Rerouted(Vec<Ipv4Addr>),
     Skipped,
 }
 
-pub struct Unblocker {
+pub struct Rerouter {
     router_requests: UnboundedSender<AddRoutesRequest>,
     routed_snapshot: Arc<ArcSwapOption<Vec<RoutedEntry>>>,
 }
@@ -36,7 +36,7 @@ pub struct RoutedEntry {
     pub comment: String,
 }
 
-impl Unblocker {
+impl Rerouter {
     pub fn new(router_client: impl RouterClient, route_ttl: Option<Duration>) -> Self {
         let routed_snapshot = Arc::new(ArcSwapOption::empty());
         let (router_requests_tx, router_requests_rx) = unbounded_channel();
@@ -57,14 +57,14 @@ impl Unblocker {
         self.routed_snapshot.clone()
     }
 
-    pub async fn unblock(
+    pub async fn reroute(
         &self,
         ips: impl IntoIterator<Item = Ipv4Addr>,
         comment: &str,
-    ) -> Result<UnblockResponse> {
+    ) -> Result<RerouteResponse> {
         let ips = ips.into_iter().collect::<HashSet<_>>();
         if ips.is_empty() {
-            return Ok(UnblockResponse::Skipped);
+            return Ok(RerouteResponse::Skipped);
         }
         let (response_tx, response_rx) = oneshot::channel();
         self.router_requests
@@ -82,7 +82,7 @@ impl Unblocker {
 #[derive(Debug)]
 struct AddRoutesRequest {
     ips: HashSet<Ipv4Addr>,
-    waiter: oneshot::Sender<Result<UnblockResponse>>,
+    waiter: oneshot::Sender<Result<RerouteResponse>>,
     comment: String,
 }
 
@@ -95,18 +95,18 @@ async fn router_requests_handler(
     let loaded = load_routed(&router_client).await;
     info!("Loaded {} routed IPs from router", loaded.len());
     let now = Instant::now();
-    let mut unblocked: HashMap<Ipv4Addr, (Instant, String)> = loaded
+    let mut rerouted: HashMap<Ipv4Addr, (Instant, String)> = loaded
         .into_iter()
         .map(|(ip, comment)| (ip, (now, comment)))
         .collect();
-    update_snapshot(&routed_snapshot, &unblocked);
+    update_snapshot(&routed_snapshot, &rerouted);
 
     while let Some(request) = requests.recv().await {
         let now = Instant::now();
         let mut changed = false;
         // Touch all requested IPs to refresh their TTL
         for &ip in &request.ips {
-            if let Some(entry) = unblocked.get_mut(&ip) {
+            if let Some(entry) = rerouted.get_mut(&ip) {
                 entry.0 = now;
                 if entry.1.is_empty() && !request.comment.is_empty() {
                     entry.1 = request.comment.clone();
@@ -116,7 +116,7 @@ async fn router_requests_handler(
         let blocked = request
             .ips
             .iter()
-            .filter(|ip| !unblocked.contains_key(ip))
+            .filter(|ip| !rerouted.contains_key(ip))
             .copied()
             .collect::<Vec<_>>();
         if !blocked.is_empty() {
@@ -124,21 +124,21 @@ async fn router_requests_handler(
             match add_result {
                 Ok(_) => {
                     for &ip in &request.ips {
-                        unblocked.insert(ip, (now, request.comment.clone()));
+                        rerouted.insert(ip, (now, request.comment.clone()));
                     }
                     changed = true;
-                    let _ = request.waiter.send(Ok(UnblockResponse::Unblocked(blocked)));
+                    let _ = request.waiter.send(Ok(RerouteResponse::Rerouted(blocked)));
                 }
                 Err(err) => {
                     let _ = request.waiter.send(Err(err));
                 }
             }
         } else {
-            let _ = request.waiter.send(Ok(UnblockResponse::Skipped));
+            let _ = request.waiter.send(Ok(RerouteResponse::Skipped));
         }
         // Remove up to 50 expired routes on each request
         if let Some(ttl) = route_ttl {
-            let expired: Vec<Ipv4Addr> = unblocked
+            let expired: Vec<Ipv4Addr> = rerouted
                 .iter()
                 .filter(|(_, (last_seen, _))| now.duration_since(*last_seen) > ttl)
                 .map(|(ip, _)| *ip)
@@ -147,7 +147,7 @@ async fn router_requests_handler(
             for ip in expired {
                 match router_client.remove_route(ip).await {
                     Ok(_) => {
-                        unblocked.remove(&ip);
+                        rerouted.remove(&ip);
                         changed = true;
                         info!("Removed expired route {}", ip);
                     }
@@ -158,16 +158,16 @@ async fn router_requests_handler(
             }
         }
         if changed {
-            update_snapshot(&routed_snapshot, &unblocked);
+            update_snapshot(&routed_snapshot, &rerouted);
         }
     }
 }
 
 fn update_snapshot(
     snapshot: &ArcSwapOption<Vec<RoutedEntry>>,
-    unblocked: &HashMap<Ipv4Addr, (Instant, String)>,
+    rerouted: &HashMap<Ipv4Addr, (Instant, String)>,
 ) {
-    let entries: Vec<RoutedEntry> = unblocked
+    let entries: Vec<RoutedEntry> = rerouted
         .iter()
         .map(|(ip, (_, comment))| RoutedEntry {
             ip: *ip,
@@ -201,7 +201,7 @@ async fn load_routed(router_client: &impl RouterClient) -> Vec<(Ipv4Addr, String
 mod tests {
     use crate::routers::RouterClient;
 
-    use super::{UnblockResponse, Unblocker};
+    use super::{RerouteResponse, Rerouter};
     use anyhow::Result;
     use async_trait::async_trait;
     use futures_util::{
@@ -278,30 +278,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn should_add_routes_when_ips_are_not_unblocked() -> Result<()> {
+    async fn should_add_routes_when_ips_are_not_rerouted() -> Result<()> {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
-        let unblocker = Unblocker::new(router_mock.clone(), Some(Duration::from_secs(1)));
+        let rerouter = Rerouter::new(router_mock.clone(), Some(Duration::from_secs(1)));
         tokio::task::yield_now().await;
 
-        let response = unblocker.unblock(vec![blacklisted_ip], "").await?;
+        let response = rerouter.reroute(vec![blacklisted_ip], "").await?;
 
-        assert_eq!(response, UnblockResponse::Unblocked(vec![blacklisted_ip]));
+        assert_eq!(response, RerouteResponse::Rerouted(vec![blacklisted_ip]));
         assert_eq!(router_mock.add_calls.load(Ordering::Relaxed), 1);
         Ok(())
     }
 
     #[tokio::test]
-    async fn should_not_add_routes_when_ips_are_unblocked() -> Result<()> {
+    async fn should_not_add_routes_when_ips_are_rerouted() -> Result<()> {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
-        let unblocker = Unblocker::new(router_mock.clone(), Some(Duration::from_secs(1)));
+        let rerouter = Rerouter::new(router_mock.clone(), Some(Duration::from_secs(1)));
         tokio::task::yield_now().await;
-        unblocker.unblock(vec![blacklisted_ip], "").await?;
+        rerouter.reroute(vec![blacklisted_ip], "").await?;
 
-        let response = unblocker.unblock(vec![blacklisted_ip], "").await?;
+        let response = rerouter.reroute(vec![blacklisted_ip], "").await?;
 
-        assert_eq!(response, UnblockResponse::Skipped);
+        assert_eq!(response, RerouteResponse::Skipped);
         assert_eq!(router_mock.add_calls.load(Ordering::Relaxed), 1);
         Ok(())
     }
@@ -311,16 +311,16 @@ mod tests {
         let expired_ip: Ipv4Addr = "64.233.162.103".parse().unwrap();
         let new_ip: Ipv4Addr = "64.233.162.104".parse().unwrap();
         let router_mock = RouterMock::new();
-        let unblocker = Arc::new(Unblocker::new(
+        let rerouter = Arc::new(Rerouter::new(
             router_mock.clone(),
             Some(Duration::from_millis(1)),
         ));
         tokio::task::yield_now().await;
 
-        unblocker.unblock(vec![expired_ip], "").await?;
+        rerouter.reroute(vec![expired_ip], "").await?;
         sleep(Duration::from_millis(10)).await;
         // Next request triggers cleanup of expired routes
-        unblocker.unblock(vec![new_ip], "").await?;
+        rerouter.reroute(vec![new_ip], "").await?;
 
         assert!(router_mock.remove_called.load(Ordering::Relaxed));
         Ok(())
@@ -330,7 +330,7 @@ mod tests {
     async fn should_not_add_same_router_in_parallel() -> Result<()> {
         let blacklisted_ip = "64.233.162.103".parse().unwrap();
         let router_mock = RouterMock::new();
-        let unblocker = Arc::new(Unblocker::new(
+        let rerouter = Arc::new(Rerouter::new(
             router_mock.clone(),
             Some(Duration::from_secs(1)),
         ));
@@ -338,21 +338,21 @@ mod tests {
         let hunger = router_mock.hung_add_routes();
 
         let t1 = tokio::spawn({
-            let unblocker = unblocker.clone();
-            async move { unblocker.unblock(vec![blacklisted_ip], "").await.unwrap() }
+            let rerouter = rerouter.clone();
+            async move { rerouter.reroute(vec![blacklisted_ip], "").await.unwrap() }
         });
         tokio::task::yield_now().await;
         let t2 = tokio::spawn({
-            let unblocker = unblocker.clone();
-            async move { unblocker.unblock(vec![blacklisted_ip], "").await.unwrap() }
+            let rerouter = rerouter.clone();
+            async move { rerouter.reroute(vec![blacklisted_ip], "").await.unwrap() }
         });
         tokio::task::yield_now().await;
         hunger.send(()).unwrap();
         let (t1, t2) = tokio::try_join!(t1, t2)?;
 
         assert_eq!(router_mock.add_calls.load(Ordering::Relaxed), 1);
-        assert_eq!(t1, UnblockResponse::Unblocked(vec![blacklisted_ip]));
-        assert_eq!(t2, UnblockResponse::Skipped);
+        assert_eq!(t1, RerouteResponse::Rerouted(vec![blacklisted_ip]));
+        assert_eq!(t2, RerouteResponse::Skipped);
 
         Ok(())
     }

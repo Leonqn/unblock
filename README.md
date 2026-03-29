@@ -1,4 +1,4 @@
-# Unblock
+# Reroute
 
 DNS-прокси с выборочной маршрутизацией трафика и блокировкой рекламы для роутеров Keenetic.
 
@@ -28,30 +28,30 @@ docker run --rm -v $(pwd):/app -w /app \
   cargo build --release --target mipsel-unknown-linux-musl
 ```
 
-Бинарник: `target/<таргет>/release/unblock`.
+Бинарник: `target/<таргет>/release/reroute`.
 
 ### 2. Установка на роутер
 
 Доставить бинарник и конфиг на роутер любым удобным способом (scp, curl, флешка и т.д.):
 
 ```
-/opt/bin/unblock            — бинарник (chmod +x)
-/opt/etc/unblock/config.yml — конфиг (на основе config.example.yml)
+/opt/bin/reroute            — бинарник (chmod +x)
+/opt/etc/reroute/config.yml — конфиг (на основе config.example.yml)
 ```
 
 Создать директории:
 
 ```bash
-mkdir -p /opt/etc/unblock /opt/var/unblock /opt/var/log
+mkdir -p /opt/etc/reroute /opt/var/reroute /opt/var/log
 ```
 
 ### 3. Настройка конфига
 
-В `/opt/etc/unblock/config.yml` указать:
+В `/opt/etc/reroute/config.yml` указать:
 
 - `bind_addr: 0.0.0.0:53`
-- `data_dir: /opt/var/unblock`
-- Настроить секцию `unblock` (router_api_uri, route_interface) под свой роутер
+- `data_dir: /opt/var/reroute`
+- Настроить секцию `reroute` (router_api_uri, route_interface) под свой роутер
 
 ### 4. Отключение встроенного DNS
 
@@ -62,7 +62,7 @@ opkg dns-override
 system configuration save
 ```
 
-Клиенты в сети продолжат получать адрес роутера как DNS-сервер по DHCP, но запросы будет обрабатывать unblock.
+Клиенты в сети продолжат получать адрес роутера как DNS-сервер по DHCP, но запросы будет обрабатывать reroute.
 
 Откатить обратно:
 
@@ -73,19 +73,19 @@ system configuration save
 
 ### 5. Init-скрипт
 
-Создать `/opt/etc/init.d/S99unblock`:
+Создать `/opt/etc/init.d/S99reroute`:
 
 ```bash
 #!/bin/sh
 
 ENABLED=yes
-PROCS=unblock
+PROCS=reroute
 DESC=$PROCS
 
 start() {
     echo "Starting $DESC..."
-    RUST_LOG=info /opt/bin/$PROCS /opt/etc/unblock/config.yml \
-        >> /opt/var/log/unblock.log 2>&1 &
+    RUST_LOG=info /opt/bin/$PROCS /opt/etc/reroute/config.yml \
+        >> /opt/var/log/reroute.log 2>&1 &
 }
 
 stop() {
@@ -102,7 +102,7 @@ esac
 ```
 
 ```bash
-chmod +x /opt/etc/init.d/S99unblock
+chmod +x /opt/etc/init.d/S99reroute
 ```
 
 ### 6. Зависимости
@@ -113,10 +113,10 @@ opkg install ca-certificates ca-bundle logrotate
 
 ### 7. Ротация логов
 
-Создать `/opt/etc/logrotate.d/unblock`:
+Создать `/opt/etc/logrotate.d/reroute`:
 
 ```
-/opt/var/log/unblock.log {
+/opt/var/log/reroute.log {
     size 1M
     rotate 2
     compress
@@ -134,8 +134,8 @@ opkg install ca-certificates ca-bundle logrotate
 ### 8. Запуск
 
 ```bash
-/opt/etc/init.d/S99unblock start
-tail -f /opt/var/log/unblock.log
+/opt/etc/init.d/S99reroute start
+tail -f /opt/var/log/reroute.log
 ```
 
 Сервис автоматически запускается при загрузке роутера.
@@ -181,7 +181,7 @@ tail -f /opt/var/log/unblock.log
 Все DNS-запросы от клиентов проходят через цепочку обработчиков:
 
 ```
-Запрос клиента → Блокировка рекламы → Кеш → Unblock → Retry → Маршрутизация DNS → Upstream
+Запрос клиента → Блокировка рекламы → Кеш → Reroute → Retry → Маршрутизация DNS → Upstream
 ```
 
 По умолчанию запросы отправляются на UDP upstream (например, `8.8.8.8`), но можно настроить DoH (DNS-over-HTTPS) для большей приватности.
@@ -197,7 +197,7 @@ dns_routing:
       - https://common.dot.dns.yandex.net/dns-query
 ```
 
-### unblock
+### reroute
 
 Выборочная маршрутизация трафика через альтернативный интерфейс на основе списков доменов:
 

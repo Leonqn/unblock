@@ -1,5 +1,5 @@
 services:
-  unblock:
+  reroute:
     build:
       context: .
       network: host
@@ -9,7 +9,7 @@ services:
       - "53:53/udp"
       - "53:53/tcp"
     volumes:
-      - ./config.yml:/etc/unblock/config.yml
+      - ./config.yml:/etc/reroute/config.yml
     logging:
       driver: json-file
       options:

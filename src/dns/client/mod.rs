@@ -10,11 +10,11 @@ mod choice;
 mod doh;
 mod domain_routing;
 mod either;
+mod reroute;
 mod retry;
 mod round_robin;
 mod stats;
 mod udp;
-mod unblock;
 
 use super::message::{Query, Response};
 pub use ads_block::*;
@@ -23,11 +23,11 @@ pub use choice::*;
 pub use doh::*;
 pub use domain_routing::*;
 pub use either::*;
+pub use reroute::*;
 pub use retry::*;
 pub use round_robin::*;
 pub use stats::*;
 pub use udp::*;
-pub use unblock::*;
 
 #[async_trait]
 pub trait DnsClient: Send + Sync + 'static {

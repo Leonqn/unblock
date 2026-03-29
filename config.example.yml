@@ -9,7 +9,7 @@ dns_routing:
   - domains: ["*.ru", "*.xn--p1ai"]
     doh_upstreams:
       - https://common.dot.dns.yandex.net/dns-query
-unblock:
+reroute:
  rvzdata_url: https://raw.githubusercontent.com/fz139/blocked-domains-resolves/refs/heads/main/rvzdata.json
  inside_raw_url: https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Russia/inside-raw.lst
  blacklist_update_interval: 60 minutes
@@ -27,5 +27,5 @@ ads_block:
 retry:
   attempts_count: 3
   next_attempt_delay: 200 millis
-data_dir: ./cache  # directory for disk-based blacklists and filters (default: /tmp/unblock)
+data_dir: ./cache  # directory for disk-based blacklists and filters (default: /tmp/reroute)
 # cache_max_size: 500      # max DNS cache entries (default: unlimited)

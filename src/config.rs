@@ -14,7 +14,7 @@ pub struct Config {
     pub udp_dns_upstream: SocketAddr,
     pub doh_upstreams: Option<Vec<String>>,
     pub dns_routing: Option<Vec<DnsRoute>>,
-    pub unblock: Option<Unblock>,
+    pub reroute: Option<Reroute>,
     pub ads_block: Option<AdsBlock>,
     pub retry: Option<Retry>,
     pub cache_max_size: Option<usize>,
@@ -58,7 +58,7 @@ pub struct AdsBlock {
 }
 
 #[derive(Deserialize)]
-pub struct Unblock {
+pub struct Reroute {
     pub rvzdata_url: Option<String>,
     pub inside_raw_url: Option<String>,
     #[serde(with = "humantime_serde")]
@@ -73,5 +73,5 @@ pub struct Unblock {
 }
 
 fn default_data_dir() -> String {
-    "/tmp/unblock".to_owned()
+    "/tmp/reroute".to_owned()
 }

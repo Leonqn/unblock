@@ -113,10 +113,11 @@ async fn process_request(
     request: Request,
 ) {
     if waiting_requests.len() >= MAX_INFLIGHT_REQUESTS {
-        let _ = request
-            .waiter
-            .send(Err(anyhow!("Too many in-flight requests")));
-        return;
+        error!(
+            "Too many in-flight requests ({}), clearing all",
+            waiting_requests.len()
+        );
+        waiting_requests.clear();
     }
     let send_and_parse = async {
         let message = request.query.parse()?;

@@ -15,8 +15,8 @@ use tokio::net::TcpListener;
 
 use crate::{
     dns::{client::DnsClient, message::Query},
+    reroute::RoutedEntry,
     stats::StatsCollector,
-    unblock::RoutedEntry,
 };
 
 const INDEX_HTML: &str = include_str!("../static/index.html");

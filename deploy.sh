@@ -5,10 +5,10 @@ ROUTER_HOST="192.168.1.1"
 ROUTER_PORT=222
 ROUTER_USER="root"
 ROUTER_PASS="keenetic"
-BINARY_NAME="unblock"
+BINARY_NAME="reroute"
 TARGET="mipsel-unknown-linux-musl"
 REMOTE_BIN="/opt/bin/${BINARY_NAME}"
-SERVICE="/opt/etc/init.d/S99unblock"
+SERVICE="/opt/etc/init.d/S99reroute"
 HTTP_PORT=8888
 
 echo "==> Building for ${TARGET}..."
@@ -46,7 +46,7 @@ sshpass -p "${ROUTER_PASS}" ssh -o StrictHostKeyChecking=no -p "${ROUTER_PORT}" 
   ${SERVICE} start
 
   echo "Done! Watching logs for 10 seconds..."
-  tail -f /opt/var/log/unblock.log &
+  tail -f /opt/var/log/reroute.log &
   TAIL_PID=\$!
   sleep 10
   kill \$TAIL_PID 2>/dev/null

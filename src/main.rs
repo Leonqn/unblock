@@ -5,22 +5,22 @@ use std::{
     sync::Arc,
 };
 
-use crate::config::{AdsBlock, Config, DnsRoute, Retry, Unblock};
+use crate::config::{AdsBlock, Config, DnsRoute, Reroute, Retry};
 use crate::web::AppState;
 use anyhow::Result;
 use arc_swap::ArcSwapOption;
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, DomainRoutingClient, Either,
-    RetryClient, RoundRobinClient, StatsClient, UdpClient, UnblockClient,
+    RerouteClient, RetryClient, RoundRobinClient, StatsClient, UdpClient,
 };
 use domains_filter::DomainsFilter;
 use futures_util::{stream, StreamExt};
 use last_item::LastItem;
 use log::info;
 use prefix_tree::PrefixTree;
+use reroute::Rerouter;
 use routers::KeeneticClient;
 use stats::StatsCollector;
-use unblock::Unblocker;
 use url::Url;
 
 mod blacklist;
@@ -32,9 +32,9 @@ mod domains_filter;
 mod files_stream;
 mod last_item;
 mod prefix_tree;
+mod reroute;
 mod routers;
 mod stats;
-mod unblock;
 mod web;
 
 #[tokio::main(flavor = "current_thread")]
@@ -46,7 +46,7 @@ async fn main() -> Result<()> {
     let data_dir = PathBuf::from(&config.data_dir);
     std::fs::create_dir_all(&data_dir)?;
 
-    let router_for_stats: Option<Arc<KeeneticClient>> = config.unblock.as_ref().and_then(|u| {
+    let router_for_stats: Option<Arc<KeeneticClient>> = config.reroute.as_ref().and_then(|u| {
         let url = u.router_api_uri.parse().ok()?;
         Some(Arc::new(KeeneticClient::new(
             url,
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
         dns_routing: config.dns_routing,
         udp_upstream: config.udp_dns_upstream,
         ads_block: config.ads_block,
-        unblock_config: config.unblock,
+        reroute_config: config.reroute,
         retry_config: config.retry,
         data_dir,
         cache_max_size: config.cache_max_size,
@@ -116,13 +116,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-struct UnblockResult<C> {
+struct RerouteResult<C> {
     client: C,
-    routed_snapshot: Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
+    routed_snapshot: Arc<ArcSwapOption<Vec<reroute::RoutedEntry>>>,
 }
 
 struct PartialAppState {
-    routed_snapshot: Arc<ArcSwapOption<Vec<unblock::RoutedEntry>>>,
+    routed_snapshot: Arc<ArcSwapOption<Vec<reroute::RoutedEntry>>>,
 }
 
 struct DnsClientConfig {
@@ -130,7 +130,7 @@ struct DnsClientConfig {
     dns_routing: Option<Vec<DnsRoute>>,
     udp_upstream: SocketAddr,
     ads_block: Option<AdsBlock>,
-    unblock_config: Option<Unblock>,
+    reroute_config: Option<Reroute>,
     retry_config: Option<Retry>,
     data_dir: PathBuf,
     cache_max_size: Option<usize>,
@@ -142,7 +142,7 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         dns_routing,
         udp_upstream,
         ads_block,
-        unblock_config,
+        reroute_config,
         retry_config,
         data_dir,
         cache_max_size,
@@ -159,11 +159,11 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         None => Either::Right(domain_routed),
     };
 
-    let UnblockResult {
-        client: unblock_client,
+    let RerouteResult {
+        client: reroute_client,
         routed_snapshot,
-    } = create_unblock_if_needed(retry_client, unblock_config, &data_dir)?;
-    let cached_client = CachedClient::new(unblock_client, cache_max_size);
+    } = create_reroute_if_needed(retry_client, reroute_config, &data_dir)?;
+    let cached_client = CachedClient::new(reroute_client, cache_max_size);
     let ads_block_client = create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
 
     let state = PartialAppState { routed_snapshot };
@@ -190,11 +190,11 @@ fn create_ads_block_if_needed(
     }
 }
 
-fn create_unblock_if_needed(
+fn create_reroute_if_needed(
     client: impl DnsClient,
-    config: Option<Unblock>,
+    config: Option<Reroute>,
     data_dir: &Path,
-) -> Result<UnblockResult<impl DnsClient>> {
+) -> Result<RerouteResult<impl DnsClient>> {
     match config {
         Some(config) => {
             let router_client =
@@ -222,15 +222,15 @@ fn create_unblock_if_needed(
                 blacklist_last_items.push(LastItem::new(stream));
             }
 
-            let unblocker = Unblocker::new(router_client, config.route_ttl);
-            let routed_snapshot = unblocker.routed_snapshot();
+            let rerouter = Rerouter::new(router_client, config.route_ttl);
+            let routed_snapshot = rerouter.routed_snapshot();
 
             let blacklists_for_client: Vec<LastItem<Box<dyn blacklist::Blacklist>>> =
                 blacklist_last_items.to_vec();
 
-            let unblock_client = UnblockClient::new(
+            let reroute_client = RerouteClient::new(
                 client,
-                unblocker,
+                rerouter,
                 DomainsFilter::new(
                     &config
                         .manual_whitelist_dns
@@ -241,12 +241,12 @@ fn create_unblock_if_needed(
                 config.manual_whitelist.unwrap_or_default(),
                 blacklists_for_client,
             );
-            Ok(UnblockResult {
-                client: Either::Left(unblock_client),
+            Ok(RerouteResult {
+                client: Either::Left(reroute_client),
                 routed_snapshot,
             })
         }
-        None => Ok(UnblockResult {
+        None => Ok(RerouteResult {
             client: Either::Right(client),
             routed_snapshot: Arc::new(ArcSwapOption::empty()),
         }),
@@ -325,7 +325,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use crate::{
-        config::{AdsBlock, Retry, Unblock},
+        config::{AdsBlock, Reroute, Retry},
         create_dns_client,
         dns::{
             client::{DnsClient, UdpClient},
@@ -362,7 +362,7 @@ mod tests {
         tokio::spawn(router_http_stub());
         tokio::task::yield_now().await;
         let bind_addr = "0.0.0.0:3356".parse()?;
-        let data_dir = PathBuf::from("/tmp/unblock-test");
+        let data_dir = PathBuf::from("/tmp/reroute-test");
         std::fs::create_dir_all(&data_dir)?;
         let (dns_pipeline, _state) = create_dns_client(DnsClientConfig {
             doh_upstreams: Some(vec![
@@ -378,7 +378,7 @@ mod tests {
                 filter_update_interval: Duration::from_secs(10),
                 manual_rules: vec!["@||youtube.com".to_owned()],
             }),
-            unblock_config: Some(Unblock {
+            reroute_config: Some(Reroute {
                 rvzdata_url: Some(
                     "https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv"
                         .to_owned(),

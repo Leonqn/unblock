@@ -6,31 +6,31 @@ use crate::{
     dns::message::{Message, Query, Response},
     domains_filter::{DomainsFilter, MatchResult},
     last_item::LastItem,
-    unblock::{UnblockResponse, Unblocker},
+    reroute::{RerouteResponse, Rerouter},
 };
 use anyhow::Result;
 use async_trait::async_trait;
 use log::info;
 
-pub struct UnblockClient<C> {
+pub struct RerouteClient<C> {
     client: C,
-    unblocker: Unblocker,
+    rerouter: Rerouter,
     manual_dns_whitelist: DomainsFilter,
     manual_ip_whitelist: HashSet<Ipv4Addr>,
     blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
 }
 
-impl<C> UnblockClient<C> {
+impl<C> RerouteClient<C> {
     pub fn new(
         client: C,
-        unblocker: Unblocker,
+        rerouter: Rerouter,
         manual_dns_whitelist: DomainsFilter,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
         blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
     ) -> Self {
         Self {
             client,
-            unblocker,
+            rerouter,
             manual_dns_whitelist,
             manual_ip_whitelist,
             blacklists,
@@ -60,7 +60,7 @@ impl<C> UnblockClient<C> {
 }
 
 #[async_trait]
-impl<C: DnsClient> DnsClient for UnblockClient<C> {
+impl<C: DnsClient> DnsClient for RerouteClient<C> {
     async fn send(&self, query: Query) -> Result<Response> {
         let mut dns_response = self.client.send(query).await?;
         let parsed_response = dns_response.parse()?;
@@ -78,15 +78,15 @@ impl<C: DnsClient> DnsClient for UnblockClient<C> {
                 .map(|ip| ip.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
-            let unblocked = self.unblocker.unblock(blocked_ips, &domains).await?;
-            match unblocked {
-                UnblockResponse::Unblocked(_) => {
+            let rerouted = self.rerouter.reroute(blocked_ips, &domains).await?;
+            match rerouted {
+                RerouteResponse::Rerouted(_) => {
                     for domain in parsed_response.domains() {
-                        info!("domain {} unblocked", domain);
+                        info!("domain {} rerouted", domain);
                     }
                     dns_response.append_trace(&format!("blacklisted [{}] → routed", ips_str));
                 }
-                UnblockResponse::Skipped => {
+                RerouteResponse::Skipped => {
                     dns_response
                         .append_trace(&format!("blacklisted [{}] → already routed", ips_str));
                 }
