@@ -41,7 +41,7 @@ jobs:
           - target: aarch64-unknown-linux-musl
             docker_image: messense/rust-musl-cross:aarch64-musl
           - target: armv7-unknown-linux-musleabihf
-            docker_image: messense/rust-musl-cross:armv7-musl
+            docker_image: messense/rust-musl-cross:armv7-musleabihf
 
     steps:
     - uses: actions/checkout@v4
