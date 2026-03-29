@@ -77,6 +77,7 @@ async fn main() -> Result<()> {
         routed_snapshot: app_state.routed_snapshot,
         dns_pipeline: dns_pipeline.clone(),
         stats_collector: stats_collector.clone(),
+        route_ttl_secs: app_state.route_ttl_secs,
     });
 
     let web_bind_addr = config.web_bind_addr.or(config.metrics_bind_addr);
@@ -119,11 +120,17 @@ async fn main() -> Result<()> {
 
 struct RerouteResult<C> {
     client: C,
+    routed_snapshot: RerouteStateSnapshot,
+}
+
+struct RerouteStateSnapshot {
     routed_snapshot: Arc<ArcSwapOption<Vec<reroute::RoutedEntry>>>,
+    route_ttl_secs: Option<u64>,
 }
 
 struct PartialAppState {
     routed_snapshot: Arc<ArcSwapOption<Vec<reroute::RoutedEntry>>>,
+    route_ttl_secs: Option<u64>,
 }
 
 struct DnsClientConfig {
@@ -167,7 +174,10 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
     let cached_client = CachedClient::new(reroute_client, cache_max_size);
     let ads_block_client = create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
 
-    let state = PartialAppState { routed_snapshot };
+    let state = PartialAppState {
+        routed_snapshot: routed_snapshot.routed_snapshot,
+        route_ttl_secs: routed_snapshot.route_ttl_secs,
+    };
     Ok((ads_block_client, state))
 }
 
@@ -223,7 +233,8 @@ fn create_reroute_if_needed(
                 blacklist_last_items.push(LastItem::new(stream));
             }
 
-            let rerouter = Rerouter::new(router_client, config.route_ttl);
+            let route_ttl = config.route_ttl;
+            let rerouter = Rerouter::new(router_client, route_ttl);
             let routed_snapshot = rerouter.routed_snapshot();
 
             let blacklists_for_client: Vec<LastItem<Box<dyn blacklist::Blacklist>>> =
@@ -244,12 +255,18 @@ fn create_reroute_if_needed(
             );
             Ok(RerouteResult {
                 client: Either::Left(reroute_client),
-                routed_snapshot,
+                routed_snapshot: RerouteStateSnapshot {
+                    routed_snapshot,
+                    route_ttl_secs: route_ttl.map(|d| d.as_secs()),
+                },
             })
         }
         None => Ok(RerouteResult {
             client: Either::Right(client),
-            routed_snapshot: Arc::new(ArcSwapOption::empty()),
+            routed_snapshot: RerouteStateSnapshot {
+                routed_snapshot: Arc::new(ArcSwapOption::empty()),
+                route_ttl_secs: None,
+            },
         }),
     }
 }

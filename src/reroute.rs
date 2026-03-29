@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     net::Ipv4Addr,
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use crate::routers::RouterClient;
@@ -34,6 +34,8 @@ pub struct Rerouter {
 pub struct RoutedEntry {
     pub ip: Ipv4Addr,
     pub comment: String,
+    /// Unix timestamp (seconds) of the last DNS request that touched this route.
+    pub last_seen_secs: u64,
 }
 
 impl Rerouter {
@@ -84,6 +86,18 @@ struct AddRoutesRequest {
     ips: HashSet<Ipv4Addr>,
     waiter: oneshot::Sender<Result<RerouteResponse>>,
     comment: String,
+}
+
+/// Convert a tokio `Instant` (last_seen) to a unix timestamp in seconds.
+/// We anchor the conversion via `SystemTime::now()` and the elapsed time
+/// since `last_seen`, so we never need a global process-start offset.
+fn instant_to_unix_secs(last_seen: Instant) -> u64 {
+    let elapsed = last_seen.elapsed();
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .saturating_sub(elapsed)
+        .as_secs()
 }
 
 async fn router_requests_handler(
@@ -169,9 +183,10 @@ fn update_snapshot(
 ) {
     let entries: Vec<RoutedEntry> = rerouted
         .iter()
-        .map(|(ip, (_, comment))| RoutedEntry {
+        .map(|(ip, (last_seen, comment))| RoutedEntry {
             ip: *ip,
             comment: comment.clone(),
+            last_seen_secs: instant_to_unix_secs(*last_seen),
         })
         .collect();
     snapshot.store(Some(Arc::new(entries)));

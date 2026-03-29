@@ -20,6 +20,11 @@ button:hover { background: #c73e54; }
 table { width: 100%; border-collapse: collapse; margin-top: 10px; }
 th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #0f3460; font-size: 13px; }
 th { color: #e94560; font-weight: 600; }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { color: #ff6b8a; }
+th.sortable .sort-arrow { margin-left: 4px; opacity: 0.4; font-style: normal; }
+th.sortable.sort-asc .sort-arrow,
+th.sortable.sort-desc .sort-arrow { opacity: 1; }
 .form-row { display: flex; gap: 8px; margin-bottom: 15px; }
 .form-row input { flex: 1; }
 .result-box { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: 15px; margin-top: 10px; }
@@ -29,6 +34,9 @@ th { color: #e94560; font-weight: 600; }
 .tag-blue { background: #1a1a5c; color: #6b6bff; }
 .count { color: #888; font-size: 13px; margin-left: 10px; }
 .empty { color: #555; font-style: italic; padding: 20px 0; }
+.ttl-fresh { color: #6bff6b; }
+.ttl-mid   { color: #ffd76b; }
+.ttl-old   { color: #ff6b6b; }
 </style>
 </head>
 <body>
@@ -45,7 +53,14 @@ th { color: #e94560; font-weight: 600; }
     <input type="text" id="routed-filter" placeholder="Filter..." oninput="renderRouted()">
   </div>
   <table>
-    <thead><tr><th>IP</th><th>Domain</th></tr></thead>
+    <thead>
+      <tr>
+        <th class="sortable" id="th-ip" onclick="setRoutedSort('ip')">IP <em class="sort-arrow">&#9650;</em></th>
+        <th class="sortable" id="th-comment" onclick="setRoutedSort('comment')">Domain <em class="sort-arrow">&#9650;</em></th>
+        <th class="sortable" id="th-age" onclick="setRoutedSort('age')">Last Seen <em class="sort-arrow">&#9650;</em></th>
+        <th class="sortable" id="th-ttl" onclick="setRoutedSort('ttl')">Expires In <em class="sort-arrow">&#9650;</em></th>
+      </tr>
+    </thead>
     <tbody id="routed-body"></tbody>
   </table>
   <div id="routed-empty" class="empty" style="display:none">No routed IPs</div>
@@ -56,7 +71,7 @@ th { color: #e94560; font-weight: 600; }
   <div class="form-row">
     <select id="stats-date" onchange="onDateChange()" style="background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px 12px;border-radius:4px;font-size:14px"></select>
     <input type="text" id="stats-filter" placeholder="Filter by IP..." oninput="renderStats()">
-    <button onclick="clearStatsFilter()" title="Clear filter">✕</button>
+    <button onclick="clearStatsFilter()" title="Clear filter">&#10005;</button>
   </div>
   <table>
     <thead><tr><th>IP</th><th>Device</th><th>Queries</th><th>Top Domain</th></tr></thead>
@@ -106,6 +121,16 @@ th { color: #e94560; font-weight: 600; }
 
 <script>
 let routedData = [];
+let routedTtlSecs = null; // null = TTL not configured
+
+// sortKey: 'ip' | 'comment' | 'age' | 'ttl'
+// sortDir: 'asc' | 'desc'
+let routedSortKey = 'ttl';
+let routedSortDir = 'asc'; // asc = expires soonest first
+
+// Rendered row order — parallel array to tbody rows, stores last_seen_secs per visible row.
+// Used by the ticker to update age/ttl cells without touching the rest of the DOM.
+let renderedRows = []; // [{lastSeenSecs, trEl}]
 
 function showTab(id) {
   document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
@@ -118,31 +143,155 @@ function showTab(id) {
 async function loadRouted() {
   try {
     const r = await fetch('/api/routed');
-    routedData = await r.json();
+    const data = await r.json();
+    routedData = data.entries;
+    routedTtlSecs = data.route_ttl_secs ?? null;
     renderRouted();
   } catch(e) {}
 }
 
+function setRoutedSort(key) {
+  if (routedSortKey === key) {
+    routedSortDir = routedSortDir === 'asc' ? 'desc' : 'asc';
+  } else {
+    routedSortKey = key;
+    routedSortDir = 'asc';
+  }
+  updateSortHeaders();
+  renderRouted();
+}
+
+function updateSortHeaders() {
+  const cols = ['ip', 'comment', 'age', 'ttl'];
+  const arrowUp = '&#9650;';
+  const arrowDown = '&#9660;';
+  cols.forEach(col => {
+    const th = document.getElementById('th-' + col);
+    if (!th) return;
+    th.classList.remove('sort-asc', 'sort-desc');
+    const arrow = th.querySelector('.sort-arrow');
+    if (col === routedSortKey) {
+      th.classList.add('sort-' + routedSortDir);
+      arrow.innerHTML = routedSortDir === 'asc' ? arrowUp : arrowDown;
+    } else {
+      arrow.innerHTML = arrowUp;
+    }
+  });
+}
+
+function formatDuration(secs) {
+  if (secs < 0) secs = 0;
+  if (secs < 60)    return secs + 's';
+  if (secs < 3600)  return Math.floor(secs / 60) + 'm';
+  if (secs < 86400) return Math.floor(secs / 3600) + 'h';
+  return Math.floor(secs / 86400) + 'd';
+}
+
+function remainingTtl(lastSeenSecs, nowSecs) {
+  if (routedTtlSecs === null || lastSeenSecs === 0) return null;
+  return Math.max(0, routedTtlSecs - (nowSecs - lastSeenSecs));
+}
+
+function ttlClass(remainingSecs) {
+  if (routedTtlSecs === null) return '';
+  const ratio = remainingSecs / routedTtlSecs;
+  if (ratio <= 0.25) return 'ttl-old';
+  if (ratio <= 0.5)  return 'ttl-mid';
+  return 'ttl-fresh';
+}
+
+/**
+ * Full rebuild of tbody. Called on data load, filter change, or sort change.
+ * Stores rendered row metadata in `renderedRows` so the ticker can do
+ * cheap in-place updates without touching IP/Domain cells.
+ */
 function renderRouted() {
+  const nowSecs = Math.floor(Date.now() / 1000);
   const filter = document.getElementById('routed-filter').value.toLowerCase();
+
   const filtered = routedData.filter(e =>
     e.ip.includes(filter) || (e.comment && e.comment.toLowerCase().includes(filter))
   );
+
+  filtered.sort((a, b) => {
+    let cmp = 0;
+    if (routedSortKey === 'ip') {
+      const toNum = ip => ip.split('.').reduce((acc, oct) => acc * 256 + parseInt(oct, 10), 0);
+      cmp = toNum(a.ip) - toNum(b.ip);
+    } else if (routedSortKey === 'comment') {
+      cmp = (a.comment || '').localeCompare(b.comment || '');
+    } else if (routedSortKey === 'age') {
+      cmp = (a.last_seen_secs || 0) - (b.last_seen_secs || 0);
+    } else {
+      const ra = remainingTtl(a.last_seen_secs || 0, nowSecs) ?? Infinity;
+      const rb = remainingTtl(b.last_seen_secs || 0, nowSecs) ?? Infinity;
+      cmp = ra - rb;
+    }
+    return routedSortDir === 'asc' ? cmp : -cmp;
+  });
+
   document.getElementById('routed-count').textContent = '(' + routedData.length + ')';
   const tbody = document.getElementById('routed-body');
   const empty = document.getElementById('routed-empty');
+
   if (filtered.length === 0) {
     tbody.innerHTML = '';
+    renderedRows = [];
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
-  tbody.innerHTML = filtered.map(e =>
-    '<tr><td>' + esc(e.ip) + '</td><td>' + esc(e.comment || '') + '</td></tr>'
-  ).join('');
+
+  // Build fragment once — single reflow.
+  const fragment = document.createDocumentFragment();
+  renderedRows = filtered.map(e => {
+    const lastSeen = e.last_seen_secs || 0;
+    const ageSecs = lastSeen > 0 ? nowSecs - lastSeen : null;
+    const ageText = ageSecs !== null ? formatDuration(ageSecs) + ' ago' : '\u2014';
+    const rem = remainingTtl(lastSeen, nowSecs);
+    const ttlText = rem !== null ? 'in ' + formatDuration(rem) : '\u2014';
+    const ttlCls  = rem !== null ? ttlClass(rem) : '';
+
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + esc(e.ip) + '</td>'
+      + '<td>' + esc(e.comment || '') + '</td>'
+      + '<td class="age-cell">' + esc(ageText) + '</td>'
+      + '<td class="ttl-cell ' + ttlCls + '">' + esc(ttlText) + '</td>';
+    fragment.appendChild(tr);
+    return { lastSeenSecs: lastSeen, trEl: tr };
+  });
+
+  tbody.innerHTML = '';
+  tbody.appendChild(fragment);
+}
+
+/**
+ * Ticker: runs every second, touches only the two time cells per row.
+ * No sort re-run, no DOM reconstruction. O(n) text updates only.
+ */
+function tickRouted() {
+  if (renderedRows.length === 0) return;
+  const nowSecs = Math.floor(Date.now() / 1000);
+  for (const { lastSeenSecs, trEl } of renderedRows) {
+    const ageSecs = lastSeenSecs > 0 ? nowSecs - lastSeenSecs : null;
+    const ageText = ageSecs !== null ? formatDuration(ageSecs) + ' ago' : '\u2014';
+    const rem = remainingTtl(lastSeenSecs, nowSecs);
+    const ttlText = rem !== null ? 'in ' + formatDuration(rem) : '\u2014';
+    const ttlCls  = rem !== null ? ttlClass(rem) : '';
+
+    const ageCell = trEl.querySelector('.age-cell');
+    const ttlCell = trEl.querySelector('.ttl-cell');
+    if (ageCell) ageCell.textContent = ageText;
+    if (ttlCell) {
+      ttlCell.textContent = ttlText;
+      ttlCell.className = 'ttl-cell ' + ttlCls;
+    }
+  }
 }
 
 setInterval(loadRouted, 5000);
+setInterval(tickRouted, 1000);
 loadRouted();
 
 // --- Stats ---
@@ -297,7 +446,7 @@ async function checkUpdates() {
       btn.disabled = false;
       return;
     }
-    status.innerHTML = '<span style="color:#6bff6b">Latest release: ' + esc(data.tag_name) + (data.name ? ' — ' + esc(data.name) : '') + '</span>';
+    status.innerHTML = '<span style="color:#6bff6b">Latest release: ' + esc(data.tag_name) + (data.name ? ' &mdash; ' + esc(data.name) : '') + '</span>';
     if (data.assets.length === 0) {
       list.innerHTML = '<div class="empty">No binaries available</div>';
       btn.disabled = false;

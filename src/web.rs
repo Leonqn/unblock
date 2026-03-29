@@ -26,6 +26,14 @@ pub struct AppState {
     pub routed_snapshot: Arc<ArcSwapOption<Vec<RoutedEntry>>>,
     pub dns_pipeline: Arc<dyn DnsClient>,
     pub stats_collector: Arc<StatsCollector>,
+    /// Global route TTL in seconds, from config. None means routes never expire.
+    pub route_ttl_secs: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct RoutedResponse<'a> {
+    route_ttl_secs: Option<u64>,
+    entries: Vec<&'a RoutedEntry>,
 }
 
 #[derive(Serialize)]
@@ -130,20 +138,19 @@ async fn handle_request(
         (&Method::GET, "/") => html_response(INDEX_HTML),
         (&Method::GET, "/api/routed") => {
             let snapshot = state.routed_snapshot.load_full();
-            let entries = snapshot
+            let entries: Vec<&RoutedEntry> = snapshot
                 .as_ref()
-                .map(|v| v.as_ref().clone())
+                .map(|v| v.iter().collect())
                 .unwrap_or_default();
             debug!(
                 "GET /api/routed: snapshot={}, entries={}",
-                if snapshot.is_some() {
-                    "present"
-                } else {
-                    "none"
-                },
+                snapshot.as_ref().map_or("none", |_| "present"),
                 entries.len()
             );
-            json_response(&entries)
+            json_response(&RoutedResponse {
+                route_ttl_secs: state.route_ttl_secs,
+                entries,
+            })
         }
         (&Method::GET, "/api/stats/dates") => {
             let mut dates = state.stats_collector.available_dates().await;
