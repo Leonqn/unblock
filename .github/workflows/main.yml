@@ -10,21 +10,84 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-
+  test:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Install latest stable
-      uses: actions-rs/toolchain@v1
+      uses: dtolnay/rust-toolchain@stable
       with:
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
+        components: rustfmt, clippy
     - name: Rustfmt check
       run: cargo fmt -- --check
     - name: Clippy
       run: cargo clippy --verbose -- -D warnings
     - name: Run tests
       run: cargo test --verbose
+
+  build:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - target: mipsel-unknown-linux-musl
+            docker_image: messense/rust-musl-cross:mipsel-musl
+          - target: mips-unknown-linux-musl
+            docker_image: messense/rust-musl-cross:mips-musl
+          - target: aarch64-unknown-linux-musl
+            docker_image: messense/rust-musl-cross:aarch64-musl
+          - target: armv7-unknown-linux-musleabihf
+            docker_image: messense/rust-musl-cross:armv7-musl
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build
+      run: docker run --rm -v ${{ github.workspace }}:/app -w /app ${{ matrix.docker_image }} cargo build --release --target ${{ matrix.target }}
+    - name: Rename binary
+      run: cp target/${{ matrix.target }}/release/reroute reroute-${{ matrix.target }}
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: reroute-${{ matrix.target }}
+        path: reroute-${{ matrix.target }}
+
+  release:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        merge-multiple: true
+    - name: Determine next version
+      id: version
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Get the latest release tag
+        LATEST=$(gh release view --repo ${{ github.repository }} --json tagName -q .tagName 2>/dev/null || echo "")
+        if [ -z "$LATEST" ]; then
+          NEXT_VERSION="v1"
+        else
+          # Extract number from tag like v123
+          NUM=${LATEST#v}
+          NEXT_VERSION="v$((NUM + 1))"
+        fi
+        echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+    - name: Create release
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gh release create ${{ steps.version.outputs.version }} \
+          --repo ${{ github.repository }} \
+          --title "Release ${{ steps.version.outputs.version }}" \
+          --generate-notes \
+          reroute-*
