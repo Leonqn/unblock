@@ -55,6 +55,7 @@ th { color: #e94560; font-weight: 600; }
   <div class="form-row">
     <select id="stats-date" onchange="onDateChange()" style="background:#16213e;border:1px solid #0f3460;color:#e0e0e0;padding:8px 12px;border-radius:4px;font-size:14px"></select>
     <input type="text" id="stats-filter" placeholder="Filter by IP..." oninput="renderStats()">
+    <button onclick="clearStatsFilter()" title="Clear filter">✕</button>
   </div>
   <table>
     <thead><tr><th>IP</th><th>Device</th><th>Queries</th><th>Top Domain</th></tr></thead>
@@ -194,6 +195,13 @@ function renderStats() {
 }
 
 let currentDetailIp = '';
+
+function clearStatsFilter() {
+  document.getElementById('stats-filter').value = '';
+  currentDetailIp = '';
+  document.getElementById('stats-detail').style.display = 'none';
+  renderStats();
+}
 
 async function showIpDetail(ip) {
   currentDetailIp = ip;
