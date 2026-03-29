@@ -125,8 +125,8 @@ let routedTtlSecs = null; // null = TTL not configured
 
 // sortKey: 'ip' | 'comment' | 'age' | 'ttl'
 // sortDir: 'asc' | 'desc'
-let routedSortKey = 'ttl';
-let routedSortDir = 'asc'; // asc = expires soonest first
+let routedSortKey = 'age';
+let routedSortDir = 'desc'; // desc = freshest first
 
 // Rendered row order — parallel array to tbody rows, stores last_seen_secs per visible row.
 // Used by the ticker to update age/ttl cells without touching the rest of the DOM.
@@ -267,7 +267,7 @@ function renderRouted() {
 }
 
 /**
- * Ticker: runs every second, touches only the two time cells per row.
+ * Ticker: runs every 5s, touches only the two time cells per row.
  * No sort re-run, no DOM reconstruction. O(n) text updates only.
  */
 function tickRouted() {
@@ -291,7 +291,7 @@ function tickRouted() {
 }
 
 setInterval(loadRouted, 5000);
-setInterval(tickRouted, 1000);
+setInterval(tickRouted, 5000);
 loadRouted();
 
 // --- Stats ---
