@@ -36,6 +36,7 @@ th { color: #e94560; font-weight: 600; }
   <button class="tab active" onclick="showTab('routed')">Routed</button>
   <button class="tab" onclick="showTab('lookup')">DNS Lookup</button>
   <button class="tab" onclick="showTab('stats')">Stats</button>
+  <button class="tab" onclick="showTab('updates')">Updates</button>
 </div>
 
 <div id="routed" class="panel active">
@@ -94,6 +95,13 @@ th { color: #e94560; font-weight: 600; }
     <button onclick="doLookup()">Resolve</button>
   </div>
   <div id="lookup-result"></div>
+</div>
+
+<div id="updates" class="panel">
+  <h2>Updates</h2>
+  <button id="check-updates-btn" onclick="checkUpdates()">Check for updates</button>
+  <div id="updates-status" style="margin-top:15px"></div>
+  <div id="updates-list" style="margin-top:15px"></div>
 </div>
 
 <script>
@@ -267,6 +275,72 @@ async function doLookup() {
     box_.innerHTML = html;
   } catch(e) {
     box_.innerHTML = '<div class="result-box">Error: ' + esc(e.message) + '</div>';
+  }
+}
+
+// --- Updates ---
+let updateAssets = [];
+
+async function checkUpdates() {
+  const btn = document.getElementById('check-updates-btn');
+  const status = document.getElementById('updates-status');
+  const list = document.getElementById('updates-list');
+  btn.disabled = true;
+  status.innerHTML = '<span style="color:#888">Checking...</span>';
+  list.innerHTML = '';
+  updateAssets = [];
+  try {
+    const r = await fetch('/api/updates/check');
+    const data = await r.json();
+    if (data.error) {
+      status.innerHTML = '<span style="color:#ff6b6b">Error: ' + esc(data.error) + '</span>';
+      btn.disabled = false;
+      return;
+    }
+    status.innerHTML = '<span style="color:#6bff6b">Latest release: ' + esc(data.tag_name) + (data.name ? ' — ' + esc(data.name) : '') + '</span>';
+    if (data.assets.length === 0) {
+      list.innerHTML = '<div class="empty">No binaries available</div>';
+      btn.disabled = false;
+      return;
+    }
+    updateAssets = data.assets;
+    list.innerHTML = '<table><thead><tr><th>Binary</th><th>Size</th><th></th></tr></thead><tbody>' +
+      data.assets.map((a, i) => {
+        const sizeMB = (a.size / 1024 / 1024).toFixed(1);
+        return '<tr><td>' + esc(a.name) + '</td><td>' + sizeMB + ' MB</td>' +
+          '<td><button onclick="applyUpdate(' + i + ')">Install</button></td></tr>';
+      }).join('') +
+      '</tbody></table>';
+    btn.disabled = false;
+  } catch(e) {
+    status.innerHTML = '<span style="color:#ff6b6b">Error: ' + esc(e.message) + '</span>';
+    btn.disabled = false;
+  }
+}
+
+async function applyUpdate(index) {
+  const asset = updateAssets[index];
+  if (!asset) return;
+  if (!confirm('Install ' + asset.name + '? The service will restart.')) return;
+  const status = document.getElementById('updates-status');
+  const list = document.getElementById('updates-list');
+  status.innerHTML = '<span style="color:#888">Downloading and installing update...</span>';
+  list.innerHTML = '';
+  try {
+    const r = await fetch('/api/updates/apply', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({url: asset.browser_download_url})
+    });
+    const data = await r.json();
+    if (data.error) {
+      status.innerHTML = '<span style="color:#ff6b6b">Error: ' + esc(data.error) + '</span>';
+      return;
+    }
+    status.innerHTML = '<span style="color:#6bff6b">Update installed! Service is restarting. Page will reload in 5 seconds...</span>';
+    setTimeout(() => location.reload(), 5000);
+  } catch(e) {
+    status.innerHTML = '<span style="color:#ff6b6b">Error: ' + esc(e.message) + '</span>';
   }
 }
 

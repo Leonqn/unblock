@@ -46,7 +46,7 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Build
-      run: docker run --rm -v ${{ github.workspace }}:/app -w /app ${{ matrix.docker_image }} cargo build --release --target ${{ matrix.target }}
+      run: docker run --rm -e GITHUB_REPOSITORY=${{ github.repository }} -v ${{ github.workspace }}:/app -w /app ${{ matrix.docker_image }} cargo build --release --target ${{ matrix.target }}
     - name: Rename binary
       run: cp target/${{ matrix.target }}/release/reroute reroute-${{ matrix.target }}
     - name: Upload artifact

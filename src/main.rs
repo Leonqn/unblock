@@ -35,6 +35,7 @@ mod prefix_tree;
 mod reroute;
 mod routers;
 mod stats;
+mod updater;
 mod web;
 
 #[tokio::main(flavor = "current_thread")]

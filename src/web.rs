@@ -17,6 +17,7 @@ use crate::{
     dns::{client::DnsClient, message::Query},
     reroute::RoutedEntry,
     stats::StatsCollector,
+    updater,
 };
 
 const INDEX_HTML: &str = include_str!("../static/index.html");
@@ -121,10 +122,11 @@ async fn handle_request(
     req: Request<Incoming>,
     state: Arc<AppState>,
 ) -> Result<Response<BoxBody>, Infallible> {
+    let method = req.method().clone();
     let path = req.uri().path().to_owned();
     let query_str = req.uri().query().unwrap_or("").to_owned();
 
-    let response = match (req.method(), path.as_str()) {
+    let response = match (&method, path.as_str()) {
         (&Method::GET, "/") => html_response(INDEX_HTML),
         (&Method::GET, "/api/routed") => {
             let snapshot = state.routed_snapshot.load_full();
@@ -216,6 +218,66 @@ async fn handle_request(
             };
 
             json_response(&LookupResult { domain, ips, trace })
+        }
+        (&Method::GET, "/api/updates/check") => match updater::check_latest_release().await {
+            Ok(release) => json_response(&release),
+            Err(e) => {
+                let error = serde_json::json!({"error": e.to_string()});
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header("Content-Type", "application/json")
+                    .body(
+                        Full::new(Bytes::from(serde_json::to_vec(&error).unwrap_or_default()))
+                            .map_err(|never| match never {})
+                            .boxed(),
+                    )
+                    .unwrap()
+            }
+        },
+        (&Method::POST, "/api/updates/apply") => {
+            let body = req
+                .into_body()
+                .collect()
+                .await
+                .map(|c| c.to_bytes())
+                .unwrap_or_default();
+
+            #[derive(serde::Deserialize)]
+            struct UpdateRequest {
+                url: String,
+            }
+
+            match serde_json::from_slice::<UpdateRequest>(&body) {
+                Ok(update_req) => match updater::apply_update(&update_req.url).await {
+                    Ok(()) => json_response(&serde_json::json!({"status": "ok"})),
+                    Err(e) => {
+                        let error = serde_json::json!({"error": e.to_string()});
+                        Response::builder()
+                            .status(StatusCode::INTERNAL_SERVER_ERROR)
+                            .header("Content-Type", "application/json")
+                            .body(
+                                Full::new(Bytes::from(
+                                    serde_json::to_vec(&error).unwrap_or_default(),
+                                ))
+                                .map_err(|never| match never {})
+                                .boxed(),
+                            )
+                            .unwrap()
+                    }
+                },
+                Err(e) => {
+                    let error = serde_json::json!({"error": format!("Invalid request: {}", e)});
+                    Response::builder()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header("Content-Type", "application/json")
+                        .body(
+                            Full::new(Bytes::from(serde_json::to_vec(&error).unwrap_or_default()))
+                                .map_err(|never| match never {})
+                                .boxed(),
+                        )
+                        .unwrap()
+                }
+            }
         }
         _ => not_found(),
     };
