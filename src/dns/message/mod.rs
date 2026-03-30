@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use bytes::{Bytes, BytesMut};
 use std::{
     convert::TryFrom,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
     time::Duration,
 };
 
@@ -155,18 +155,16 @@ impl<'m> Message<'m> {
         }
     }
 
-    pub fn ips(&self) -> impl Iterator<Item = Ipv4Addr> + '_ {
+    pub fn ips(&self) -> impl Iterator<Item = IpAddr> + '_ {
         self.answer
             .iter()
             .chain(&self.authority)
             .chain(&self.additional)
             .flatten()
-            .filter_map(|r| {
-                if let ResourceData::Ipv4(ip) = &r.data {
-                    Some(*ip)
-                } else {
-                    None
-                }
+            .filter_map(|r| match &r.data {
+                ResourceData::Ipv4(ip) => Some(IpAddr::V4(*ip)),
+                ResourceData::Ipv6(ip) => Some(IpAddr::V6(*ip)),
+                ResourceData::Other(_) => None,
             })
     }
 
@@ -248,6 +246,8 @@ impl ResourceRecord<'_> {
     ) -> Option<ResourceRecord<'a>> {
         let data = if class == 1 && type_ == 1 {
             ResourceData::Ipv4(Ipv4Addr::from(<[u8; 4]>::try_from(data).ok()?))
+        } else if class == 1 && type_ == 28 {
+            ResourceData::Ipv6(Ipv6Addr::from(<[u8; 16]>::try_from(data).ok()?))
         } else {
             ResourceData::Other(data)
         };
@@ -264,6 +264,7 @@ impl ResourceRecord<'_> {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum ResourceData<'a> {
     Ipv4(Ipv4Addr),
+    Ipv6(Ipv6Addr),
     Other(&'a [u8]),
 }
 

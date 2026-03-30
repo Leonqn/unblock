@@ -1,4 +1,7 @@
-use std::{collections::HashSet, net::Ipv4Addr};
+use std::{
+    collections::HashSet,
+    net::{IpAddr, Ipv4Addr},
+};
 
 use super::DnsClient;
 use crate::{
@@ -46,15 +49,24 @@ impl<C> RerouteClient<C> {
             .filter_map(|d| self.manual_dns_whitelist.match_domain(&d))
             .collect::<Vec<_>>();
 
+        let ipv4s = |msg: &'a Message<'a>| {
+            msg.ips().filter_map(|ip| {
+                if let IpAddr::V4(v4) = ip {
+                    Some(v4)
+                } else {
+                    None
+                }
+            })
+        };
+
         let blacklisted = parsed_response
             .domains()
             .any(|domain| is_blacklisted(&domain, &self.blacklists, &manual_dns_list))
-            .then(|| parsed_response.ips())
+            .then(|| ipv4s(parsed_response))
             .into_iter()
             .flatten();
-        let manual_ips = parsed_response
-            .ips()
-            .filter(move |ip| self.manual_ip_whitelist.contains(ip));
+        let manual_ips =
+            ipv4s(parsed_response).filter(move |ip| self.manual_ip_whitelist.contains(ip));
         blacklisted.chain(manual_ips)
     }
 }

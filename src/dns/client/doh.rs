@@ -1,4 +1,4 @@
-use std::net::Ipv4Addr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -17,7 +17,8 @@ use crate::dns::message::{Query, Response};
 
 use super::DnsClient;
 
-const LOOPBACK: Ipv4Addr = Ipv4Addr::new(127, 0, 0, 1);
+const LOOPBACK_V4: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
+const LOOPBACK_V6: IpAddr = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
 
 pub struct DohClient {
     http_client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Empty<Bytes>>,
@@ -66,7 +67,7 @@ impl DohClient {
     fn has_loopback(response: &Response) -> bool {
         response
             .parse()
-            .map(|msg| msg.ips().any(|ip| ip == LOOPBACK))
+            .map(|msg| msg.ips().any(|ip| ip == LOOPBACK_V4 || ip == LOOPBACK_V6))
             .unwrap_or(false)
     }
 }
