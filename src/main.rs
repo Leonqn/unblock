@@ -41,7 +41,7 @@ mod web;
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<()> {
     env_logger::init();
-    let config = Config::init()?;
+    let (config, config_path) = Config::init()?;
     info!("Starting service");
 
     let data_dir = PathBuf::from(&config.data_dir);
@@ -79,6 +79,9 @@ async fn main() -> Result<()> {
         dns_pipeline: dns_pipeline.clone(),
         stats_collector: stats_collector.clone(),
         route_ttl_secs: app_state.route_ttl_secs,
+        whitelist_filter: app_state.whitelist_filter,
+        whitelist_rules: app_state.whitelist_rules,
+        config_path,
     });
 
     let web_bind_addr = config.web_bind_addr.or(config.metrics_bind_addr);
@@ -127,11 +130,15 @@ struct RerouteResult<C> {
 struct RerouteStateSnapshot {
     routed_snapshot: Arc<ArcSwapOption<Vec<reroute::RoutedEntry>>>,
     route_ttl_secs: Option<u64>,
+    whitelist_filter: Arc<ArcSwapOption<DomainsFilter>>,
+    whitelist_rules: Arc<ArcSwapOption<Vec<String>>>,
 }
 
 struct PartialAppState {
     routed_snapshot: Arc<ArcSwapOption<Vec<reroute::RoutedEntry>>>,
     route_ttl_secs: Option<u64>,
+    whitelist_filter: Arc<ArcSwapOption<DomainsFilter>>,
+    whitelist_rules: Arc<ArcSwapOption<Vec<String>>>,
 }
 
 struct DnsClientConfig {
@@ -180,6 +187,8 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
     let state = PartialAppState {
         routed_snapshot: routed_snapshot.routed_snapshot,
         route_ttl_secs: routed_snapshot.route_ttl_secs,
+        whitelist_filter: routed_snapshot.whitelist_filter,
+        whitelist_rules: routed_snapshot.whitelist_rules,
     };
     Ok((ads_block_client, state))
 }
@@ -243,16 +252,17 @@ fn create_reroute_if_needed(
             let blacklists_for_client: Vec<LastItem<Box<dyn blacklist::Blacklist>>> =
                 blacklist_last_items.to_vec();
 
+            let raw_rules = config.manual_whitelist_dns.unwrap_or_default();
+            let whitelist_filter = Arc::new(ArcSwapOption::from_pointee(DomainsFilter::new(
+                &raw_rules.join("\n"),
+                None,
+            )?));
+            let whitelist_rules = Arc::new(ArcSwapOption::from_pointee(raw_rules));
+
             let reroute_client = RerouteClient::new(
                 client,
                 rerouter,
-                DomainsFilter::new(
-                    &config
-                        .manual_whitelist_dns
-                        .map(|x| x.join("\n"))
-                        .unwrap_or_default(),
-                    None,
-                )?,
+                whitelist_filter.clone(),
                 config.manual_whitelist.unwrap_or_default(),
                 blacklists_for_client,
             );
@@ -261,6 +271,8 @@ fn create_reroute_if_needed(
                 routed_snapshot: RerouteStateSnapshot {
                     routed_snapshot,
                     route_ttl_secs: route_ttl.map(|d| d.as_secs()),
+                    whitelist_filter,
+                    whitelist_rules,
                 },
             })
         }
@@ -269,6 +281,8 @@ fn create_reroute_if_needed(
             routed_snapshot: RerouteStateSnapshot {
                 routed_snapshot: Arc::new(ArcSwapOption::empty()),
                 route_ttl_secs: None,
+                whitelist_filter: Arc::new(ArcSwapOption::empty()),
+                whitelist_rules: Arc::new(ArcSwapOption::empty()),
             },
         }),
     }

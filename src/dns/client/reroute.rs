@@ -1,13 +1,16 @@
 use std::{
     collections::HashSet,
     net::{IpAddr, Ipv4Addr},
+    sync::Arc,
 };
+
+use arc_swap::ArcSwapOption;
 
 use super::DnsClient;
 use crate::{
     blacklist::Blacklist,
     dns::message::{Message, Query, Response},
-    domains_filter::{DomainsFilter, MatchResult},
+    domains_filter::DomainsFilter,
     last_item::LastItem,
     reroute::{RerouteResponse, Rerouter},
 };
@@ -18,7 +21,7 @@ use log::info;
 pub struct RerouteClient<C> {
     client: C,
     rerouter: Rerouter,
-    manual_dns_whitelist: DomainsFilter,
+    manual_dns_whitelist: Arc<ArcSwapOption<DomainsFilter>>,
     manual_ip_whitelist: HashSet<Ipv4Addr>,
     blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
 }
@@ -27,7 +30,7 @@ impl<C> RerouteClient<C> {
     pub fn new(
         client: C,
         rerouter: Rerouter,
-        manual_dns_whitelist: DomainsFilter,
+        manual_dns_whitelist: Arc<ArcSwapOption<DomainsFilter>>,
         manual_ip_whitelist: HashSet<Ipv4Addr>,
         blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
     ) -> Self {
@@ -44,10 +47,14 @@ impl<C> RerouteClient<C> {
         &'a self,
         parsed_response: &'a Message<'a>,
     ) -> impl Iterator<Item = Ipv4Addr> + 'a {
-        let manual_dns_list = parsed_response
-            .domains()
-            .filter_map(|d| self.manual_dns_whitelist.match_domain(&d))
-            .collect::<Vec<_>>();
+        let filter = self.manual_dns_whitelist.load();
+        let manual_dns_signals: Vec<bool> = match filter.as_deref() {
+            Some(f) => parsed_response
+                .domains()
+                .filter_map(|d| f.match_domain(&d).map(|m| m.is_allowed))
+                .collect(),
+            None => vec![],
+        };
 
         let ipv4s = |msg: &'a Message<'a>| {
             msg.ips().filter_map(|ip| {
@@ -61,7 +68,7 @@ impl<C> RerouteClient<C> {
 
         let blacklisted = parsed_response
             .domains()
-            .any(|domain| is_blacklisted(&domain, &self.blacklists, &manual_dns_list))
+            .any(|domain| is_blacklisted(&domain, &self.blacklists, &manual_dns_signals))
             .then(|| ipv4s(parsed_response))
             .into_iter()
             .flatten();
@@ -112,12 +119,12 @@ impl<C: DnsClient> DnsClient for RerouteClient<C> {
 fn is_blacklisted(
     domain: &str,
     blacklists: &[LastItem<Box<dyn Blacklist>>],
-    filter: &[MatchResult],
+    filter_signals: &[bool],
 ) -> bool {
-    if filter.iter().any(|m| m.is_allowed) {
+    if filter_signals.iter().any(|&is_allowed| is_allowed) {
         return true;
     }
-    if filter.iter().any(|m| !m.is_allowed) {
+    if filter_signals.iter().any(|&is_allowed| !is_allowed) {
         return false;
     }
     blacklists

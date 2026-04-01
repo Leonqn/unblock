@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arc_swap::ArcSwapOption;
@@ -15,6 +16,7 @@ use tokio::net::TcpListener;
 
 use crate::{
     dns::{client::DnsClient, message::Query},
+    domains_filter::DomainsFilter,
     reroute::RoutedEntry,
     stats::StatsCollector,
     updater,
@@ -28,6 +30,9 @@ pub struct AppState {
     pub stats_collector: Arc<StatsCollector>,
     /// Global route TTL in seconds, from config. None means routes never expire.
     pub route_ttl_secs: Option<u64>,
+    pub whitelist_filter: Arc<ArcSwapOption<DomainsFilter>>,
+    pub whitelist_rules: Arc<ArcSwapOption<Vec<String>>>,
+    pub config_path: PathBuf,
 }
 
 #[derive(Serialize)]
@@ -85,6 +90,19 @@ fn json_response(data: &impl Serialize) -> Response<BoxBody> {
         .unwrap()
 }
 
+fn error_response(status: StatusCode, message: &str) -> Response<BoxBody> {
+    let error = serde_json::json!({"error": message});
+    Response::builder()
+        .status(status)
+        .header("Content-Type", "application/json")
+        .body(
+            Full::new(Bytes::from(serde_json::to_vec(&error).unwrap_or_default()))
+                .map_err(|never| match never {})
+                .boxed(),
+        )
+        .unwrap()
+}
+
 fn not_found() -> Response<BoxBody> {
     Response::builder()
         .status(StatusCode::NOT_FOUND)
@@ -100,6 +118,26 @@ fn parse_query_param(query_str: &str, name: &str) -> Option<String> {
     url::form_urlencoded::parse(query_str.as_bytes())
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.into_owned())
+}
+
+fn persist_whitelist(config_path: &Path, rules: &[String]) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(config_path)?;
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&content)?;
+
+    let reroute = value
+        .get_mut("reroute")
+        .ok_or_else(|| anyhow::anyhow!("No reroute section in config"))?;
+
+    let rules_value = if rules.is_empty() {
+        serde_yaml::Value::Sequence(vec![])
+    } else {
+        serde_yaml::to_value(rules)?
+    };
+    reroute["manual_whitelist_dns"] = rules_value;
+
+    let new_content = serde_yaml::to_string(&value)?;
+    std::fs::write(config_path, new_content)?;
+    Ok(())
 }
 
 pub async fn start_web_server(bind_addr: SocketAddr, state: Arc<AppState>) {
@@ -226,20 +264,46 @@ async fn handle_request(
 
             json_response(&LookupResult { domain, ips, trace })
         }
+        (&Method::GET, "/api/config/whitelist") => {
+            let rules = state.whitelist_rules.load_full();
+            let rules: Vec<String> = rules.as_deref().cloned().unwrap_or_default();
+            json_response(&rules)
+        }
+        (&Method::PUT, "/api/config/whitelist") => {
+            let body = req
+                .into_body()
+                .collect()
+                .await
+                .map(|c| c.to_bytes())
+                .unwrap_or_default();
+
+            match serde_json::from_slice::<Vec<String>>(&body) {
+                Ok(new_rules) => {
+                    let rules_str = new_rules.join("\n");
+                    match DomainsFilter::new(&rules_str, None) {
+                        Ok(filter) => match persist_whitelist(&state.config_path, &new_rules) {
+                            Ok(()) => {
+                                state.whitelist_filter.store(Some(Arc::new(filter)));
+                                state.whitelist_rules.store(Some(Arc::new(new_rules)));
+                                json_response(&serde_json::json!({"status": "ok"}))
+                            }
+                            Err(e) => error_response(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                &format!("Failed to save config: {}", e),
+                            ),
+                        },
+                        Err(e) => error_response(
+                            StatusCode::BAD_REQUEST,
+                            &format!("Invalid rules: {}", e),
+                        ),
+                    }
+                }
+                Err(e) => error_response(StatusCode::BAD_REQUEST, &format!("Invalid JSON: {}", e)),
+            }
+        }
         (&Method::GET, "/api/updates/check") => match updater::check_latest_release().await {
             Ok(release) => json_response(&release),
-            Err(e) => {
-                let error = serde_json::json!({"error": e.to_string()});
-                Response::builder()
-                    .status(StatusCode::INTERNAL_SERVER_ERROR)
-                    .header("Content-Type", "application/json")
-                    .body(
-                        Full::new(Bytes::from(serde_json::to_vec(&error).unwrap_or_default()))
-                            .map_err(|never| match never {})
-                            .boxed(),
-                    )
-                    .unwrap()
-            }
+            Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
         },
         (&Method::POST, "/api/updates/apply") => {
             let body = req
@@ -257,32 +321,10 @@ async fn handle_request(
             match serde_json::from_slice::<UpdateRequest>(&body) {
                 Ok(update_req) => match updater::apply_update(&update_req.url).await {
                     Ok(()) => json_response(&serde_json::json!({"status": "ok"})),
-                    Err(e) => {
-                        let error = serde_json::json!({"error": e.to_string()});
-                        Response::builder()
-                            .status(StatusCode::INTERNAL_SERVER_ERROR)
-                            .header("Content-Type", "application/json")
-                            .body(
-                                Full::new(Bytes::from(
-                                    serde_json::to_vec(&error).unwrap_or_default(),
-                                ))
-                                .map_err(|never| match never {})
-                                .boxed(),
-                            )
-                            .unwrap()
-                    }
+                    Err(e) => error_response(StatusCode::INTERNAL_SERVER_ERROR, &e.to_string()),
                 },
                 Err(e) => {
-                    let error = serde_json::json!({"error": format!("Invalid request: {}", e)});
-                    Response::builder()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header("Content-Type", "application/json")
-                        .body(
-                            Full::new(Bytes::from(serde_json::to_vec(&error).unwrap_or_default()))
-                                .map_err(|never| match never {})
-                                .boxed(),
-                        )
-                        .unwrap()
+                    error_response(StatusCode::BAD_REQUEST, &format!("Invalid request: {}", e))
                 }
             }
         }

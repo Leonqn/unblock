@@ -1,6 +1,7 @@
 use std::{
     collections::HashSet,
     net::{Ipv4Addr, SocketAddr},
+    path::PathBuf,
     time::Duration,
 };
 
@@ -26,14 +27,16 @@ pub struct Config {
 }
 
 impl Config {
-    pub fn init() -> Result<Self> {
+    pub fn init() -> Result<(Self, PathBuf)> {
         let config_name = std::env::args()
             .nth(1)
             .expect("Config file should be specified as first argument");
-        Ok(config::Config::builder()
+        let config_path = PathBuf::from(&config_name);
+        let config = config::Config::builder()
             .add_source(config::File::with_name(&config_name))
             .build()?
-            .try_deserialize()?)
+            .try_deserialize()?;
+        Ok((config, config_path))
     }
 }
 

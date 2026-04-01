@@ -44,6 +44,7 @@ th.sortable.sort-desc .sort-arrow { opacity: 1; }
   <button class="tab active" onclick="showTab('routed')">Routed</button>
   <button class="tab" onclick="showTab('lookup')">DNS Lookup</button>
   <button class="tab" onclick="showTab('stats')">Stats</button>
+  <button class="tab" onclick="showTab('whitelist')">Whitelist</button>
   <button class="tab" onclick="showTab('updates')">Updates</button>
 </div>
 
@@ -112,6 +113,20 @@ th.sortable.sort-desc .sort-arrow { opacity: 1; }
   <div id="lookup-result"></div>
 </div>
 
+<div id="whitelist" class="panel">
+  <h2>DNS Whitelist Rules</h2>
+  <p style="color:#888; margin-bottom:10px; font-size:13px">
+    AdGuard-syntax domain rules for the reroute whitelist. One rule per line.<br>
+    Example: <code>||linkedin.com</code>
+  </p>
+  <textarea id="whitelist-rules" rows="15" style="width:100%; background:#16213e; border:1px solid #0f3460; color:#e0e0e0; padding:10px; font-family:monospace; font-size:13px; border-radius:4px; resize:vertical;"></textarea>
+  <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
+    <button onclick="saveWhitelist()">Save</button>
+    <button onclick="loadWhitelist()" style="background:#0f3460;">Reload</button>
+    <span id="whitelist-status" style="font-size:13px;"></span>
+  </div>
+</div>
+
 <div id="updates" class="panel">
   <h2>Updates</h2>
   <button id="check-updates-btn" onclick="checkUpdates()">Check for updates</button>
@@ -137,6 +152,7 @@ function showTab(id) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   event.target.classList.add('active');
+  if (id === 'whitelist' && !whitelistLoaded) loadWhitelist();
 }
 
 // --- Routed ---
@@ -491,6 +507,49 @@ async function applyUpdate(index) {
     setTimeout(() => location.reload(), 5000);
   } catch(e) {
     status.innerHTML = '<span style="color:#ff6b6b">Error: ' + esc(e.message) + '</span>';
+  }
+}
+
+// --- Whitelist ---
+let whitelistLoaded = false;
+
+async function loadWhitelist() {
+  const statusEl = document.getElementById('whitelist-status');
+  try {
+    const res = await fetch('/api/config/whitelist');
+    const rules = await res.json();
+    document.getElementById('whitelist-rules').value = rules.join('\n');
+    whitelistLoaded = true;
+    statusEl.textContent = '';
+  } catch (e) {
+    statusEl.textContent = 'Failed to load: ' + e;
+    statusEl.style.color = '#ff6b6b';
+  }
+}
+
+async function saveWhitelist() {
+  const text = document.getElementById('whitelist-rules').value;
+  const rules = text.split('\n').map(r => r.trim()).filter(r => r.length > 0);
+  const statusEl = document.getElementById('whitelist-status');
+  statusEl.textContent = 'Saving...';
+  statusEl.style.color = '#888';
+  try {
+    const res = await fetch('/api/config/whitelist', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(rules)
+    });
+    const data = await res.json();
+    if (res.ok) {
+      statusEl.textContent = 'Saved';
+      statusEl.style.color = '#6bff6b';
+    } else {
+      statusEl.textContent = 'Error: ' + (data.error || 'Unknown');
+      statusEl.style.color = '#ff6b6b';
+    }
+  } catch (e) {
+    statusEl.textContent = 'Failed: ' + e;
+    statusEl.style.color = '#ff6b6b';
   }
 }
 
