@@ -21,6 +21,8 @@ pub struct Config {
     pub web_bind_addr: Option<SocketAddr>,
     #[serde(default = "default_data_dir")]
     pub data_dir: String,
+    #[serde(default = "default_ecs_override_ip")]
+    pub ecs_override_ip: Ipv4Addr,
 }
 
 impl Config {
@@ -74,4 +76,8 @@ pub struct Reroute {
 
 fn default_data_dir() -> String {
     "/tmp/reroute".to_owned()
+}
+
+fn default_ecs_override_ip() -> Ipv4Addr {
+    Ipv4Addr::new(185, 76, 151, 0)
 }

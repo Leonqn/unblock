@@ -34,7 +34,11 @@ where
                 let bytes = Bytes::copy_from_slice(&buf);
                 let mut query = Query::from_bytes(bytes)?;
                 query.set_sender(addr.ip());
-                let response = request_handler(query).await?;
+                let response = if query.is_aaaa() {
+                    query.empty_response()
+                } else {
+                    request_handler(query).await?
+                };
                 socket.write_u16(response.bytes().len() as u16).await?;
                 socket.write_all(response.bytes()).await?;
                 Ok::<_, anyhow::Error>(())
@@ -66,6 +70,14 @@ where
                 let (sender, request) = request?;
                 let mut query = Query::from_bytes(request)?;
                 query.set_sender(sender.ip());
+                if query.is_aaaa() {
+                    let response = query.empty_response();
+                    let socket = socket.clone();
+                    tokio::spawn(async move {
+                        let _ = socket.send_to(response.bytes(), &sender).await;
+                    });
+                    return Ok(());
+                }
                 let handler_fut = request_handler(query);
                 let socket = socket.clone();
                 tokio::spawn(async move {

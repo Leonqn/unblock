@@ -64,29 +64,62 @@ impl Query {
         &self.request
     }
 
-    /// Returns a copy of the query with an EDNS Client Subnet opt-out (0.0.0.0/0).
-    /// This tells recursive resolvers not to forward client subnet information.
+    /// Returns true if this is an AAAA query (type 28).
+    pub fn is_aaaa(&self) -> bool {
+        let bytes = &self.request;
+        let mut pos = 12;
+        while pos < bytes.len() && bytes[pos] != 0 {
+            pos += 1 + bytes[pos] as usize;
+        }
+        pos += 1;
+        pos + 2 <= bytes.len() && bytes[pos] == 0x00 && bytes[pos + 1] == 0x1C
+    }
+
+    /// Build an empty NOERROR response from this query (no answer records).
+    pub fn empty_response(&self) -> Response {
+        let mut buf = BytesMut::from(self.request.as_ref());
+        buf[2] = 0x81; // QR=1 (response), RD=1
+        buf[3] = 0x80; // RA=1, RCODE=0 (NOERROR)
+                       // Zero out answer/authority/additional counts
+        buf[6..12].copy_from_slice(&[0; 6]);
+        // Truncate to just header + question section
+        let mut pos = 12;
+        while pos < buf.len() && buf[pos] != 0 {
+            pos += 1 + buf[pos] as usize;
+        }
+        pos += 1 + 4; // skip 0x00 terminator + QTYPE + QCLASS
+        buf.truncate(pos);
+        Response {
+            response: buf.freeze(),
+            trace: String::new(),
+        }
+    }
+
+    /// Returns a copy of the query with an EDNS Client Subnet override.
+    /// Sets the given IPv4 address with /24 prefix so the resolver thinks
+    /// the client is at that location.
     /// Only adds the OPT record if the query doesn't already have additional records.
-    pub fn with_ecs_optout(&self) -> Query {
+    pub fn with_ecs(&self, ip: Ipv4Addr) -> Query {
         let bytes = &self.request;
         let arcount = u16::from_be_bytes([bytes[10], bytes[11]]);
         if arcount > 0 {
             return self.clone();
         }
+        let octets = ip.octets();
         let mut buf = BytesMut::from(bytes.as_ref());
         buf[10..12].copy_from_slice(&1u16.to_be_bytes());
-        // OPT record with ECS 0.0.0.0/0
         buf.extend_from_slice(&[
             0x00, // Name: root
             0x00, 0x29, // Type: OPT (41)
             0x10, 0x00, // UDP payload size: 4096
             0x00, 0x00, 0x00, 0x00, // Extended RCODE + flags
-            0x00, 0x08, // RDLENGTH: 8
+            0x00, 0x0B, // RDLENGTH: 11
             0x00, 0x08, // Option code: EDNS Client Subnet (8)
-            0x00, 0x04, // Option length: 4
+            0x00, 0x07, // Option length: 7
             0x00, 0x01, // Family: IPv4
-            0x00, // Source prefix-length: 0
+            0x18, // Source prefix-length: 24
             0x00, // Scope prefix-length: 0
+            octets[0], octets[1], octets[2], // First 3 octets
         ]);
         Query {
             request: buf.freeze(),
@@ -124,6 +157,17 @@ impl Response {
 
     pub fn trace(&self) -> &str {
         &self.trace
+    }
+
+    pub fn has_loopback(&self) -> bool {
+        self.parse()
+            .map(|msg| {
+                msg.ips().any(|ip| match ip {
+                    IpAddr::V4(v4) => v4.is_loopback(),
+                    IpAddr::V6(v6) => v6.is_loopback(),
+                })
+            })
+            .unwrap_or(false)
     }
 
     pub fn append_trace(&mut self, s: &str) {

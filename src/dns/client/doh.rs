@@ -1,4 +1,4 @@
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
@@ -17,16 +17,14 @@ use crate::dns::message::{Query, Response};
 
 use super::DnsClient;
 
-const LOOPBACK_V4: IpAddr = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
-const LOOPBACK_V6: IpAddr = IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1));
-
 pub struct DohClient {
     http_client: Client<hyper_rustls::HttpsConnector<HttpConnector>, Empty<Bytes>>,
     server_url: Url,
+    ecs_override_ip: Ipv4Addr,
 }
 
 impl DohClient {
-    pub fn new(server_url: Url) -> Result<Self> {
+    pub fn new(server_url: Url, ecs_override_ip: Ipv4Addr) -> Result<Self> {
         let https = HttpsConnectorBuilder::new()
             .with_native_roots()?
             .https_only()
@@ -40,7 +38,17 @@ impl DohClient {
         Ok(Self {
             http_client,
             server_url,
+            ecs_override_ip,
         })
+    }
+
+    fn append_resolved_trace(response: &mut Response) {
+        if let Ok(msg) = response.parse() {
+            let ips: Vec<_> = msg.ips().map(|ip| ip.to_string()).collect();
+            if !ips.is_empty() {
+                response.append_trace(&format!("resolved [{}]", ips.join(", ")));
+            }
+        }
     }
 
     async fn do_request(&self, query: &Query) -> Result<Response> {
@@ -63,36 +71,37 @@ impl DohClient {
         response.append_trace(self.server_url.as_str());
         Ok(response)
     }
-
-    fn has_loopback(response: &Response) -> bool {
-        response
-            .parse()
-            .map(|msg| msg.ips().any(|ip| ip == LOOPBACK_V4 || ip == LOOPBACK_V6))
-            .unwrap_or(false)
-    }
 }
 
 #[async_trait]
 impl DnsClient for DohClient {
     async fn send(&self, query: Query) -> Result<Response> {
         let response = self.do_request(&query).await?;
-        if Self::has_loopback(&response) {
+        if response.has_loopback() {
             let domains = query
                 .parse()
                 .map(|m| m.domains().collect::<Vec<_>>().join(", "))
                 .unwrap_or_default();
-            info!("Got 127.0.0.1 for {}, retrying with ECS opt-out", domains);
-            let query_no_ecs = query.with_ecs_optout();
-            let mut retry_response = self.do_request(&query_no_ecs).await?;
-            retry_response.append_trace("ecs-optout-retry");
+            info!(
+                "Got loopback for {}, retrying with ECS override {}",
+                domains, self.ecs_override_ip
+            );
+            let query_ecs = query.with_ecs(self.ecs_override_ip);
+            let mut retry_response = self.do_request(&query_ecs).await?;
+            retry_response.append_trace("ecs-override-retry");
+            Self::append_resolved_trace(&mut retry_response);
             return Ok(retry_response);
         }
+        let mut response = response;
+        Self::append_resolved_trace(&mut response);
         Ok(response)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::net::Ipv4Addr;
+
     use crate::dns::client::{DnsClient, Query};
     use anyhow::Result;
     use bytes::Bytes;
@@ -106,7 +115,10 @@ mod tests {
             "../../../test/dns_packets/q_api.browser.yandex.com.bin"
         )))?;
         let request_message = request.parse()?;
-        let doh_client = DohClient::new("https://dns.google/dns-query".parse()?)?;
+        let doh_client = DohClient::new(
+            "https://dns.google/dns-query".parse()?,
+            Ipv4Addr::new(185, 76, 151, 0),
+        )?;
 
         let response = doh_client.send(request.clone()).await?;
         let message = response.parse()?;

@@ -1,6 +1,6 @@
 use std::{
     collections::HashSet,
-    net::SocketAddr,
+    net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -67,6 +67,7 @@ async fn main() -> Result<()> {
         retry_config: config.retry,
         data_dir,
         cache_max_size: config.cache_max_size,
+        ecs_override_ip: config.ecs_override_ip,
     })
     .await?;
 
@@ -142,6 +143,7 @@ struct DnsClientConfig {
     retry_config: Option<Retry>,
     data_dir: PathBuf,
     cache_max_size: Option<usize>,
+    ecs_override_ip: Ipv4Addr,
 }
 
 async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, PartialAppState)> {
@@ -154,10 +156,11 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         retry_config,
         data_dir,
         cache_max_size,
+        ecs_override_ip,
     } = cfg;
     let udp_client = UdpClient::new(udp_upstream).await?;
-    let doh = create_doh_if_needed(udp_client, doh_upstreams)?;
-    let domain_routed = create_domain_routing_if_needed(doh, dns_routing)?;
+    let doh = create_doh_if_needed(udp_client, doh_upstreams, ecs_override_ip)?;
+    let domain_routed = create_domain_routing_if_needed(doh, dns_routing, ecs_override_ip)?;
     let retry_client = match retry_config {
         Some(retry) => Either::Left(RetryClient::new(
             domain_routed,
@@ -274,6 +277,7 @@ fn create_reroute_if_needed(
 fn create_domain_routing_if_needed(
     client: impl DnsClient,
     dns_routing: Option<Vec<DnsRoute>>,
+    ecs_override_ip: Ipv4Addr,
 ) -> Result<impl DnsClient> {
     match dns_routing {
         Some(routes) if !routes.is_empty() => {
@@ -283,7 +287,10 @@ fn create_domain_routing_if_needed(
                     let clients = route
                         .doh_upstreams
                         .into_iter()
-                        .map(|u| Ok(Box::new(DohClient::new(u.parse()?)?) as Box<dyn DnsClient>))
+                        .map(|u| {
+                            let c = DohClient::new(u.parse()?, ecs_override_ip)?;
+                            Ok(Box::new(c) as Box<dyn DnsClient>)
+                        })
                         .collect::<Result<_>>()?;
                     let rr = RoundRobinClient::new(clients);
                     let mut tree = PrefixTree::default();
@@ -305,6 +312,7 @@ fn create_domain_routing_if_needed(
 fn create_doh_if_needed(
     client: impl DnsClient,
     doh_upstreams: Option<Vec<String>>,
+    ecs_override_ip: Ipv4Addr,
 ) -> Result<impl DnsClient> {
     match doh_upstreams {
         Some(doh_upstreams) => {
@@ -319,8 +327,10 @@ fn create_doh_if_needed(
                 .expect("Should have domains");
             let doh_clients = doh_upstreams
                 .into_iter()
-                .map(DohClient::new)
-                .map(|c| Ok(Box::new(c?) as Box<dyn DnsClient>))
+                .map(|url| {
+                    let c = DohClient::new(url, ecs_override_ip)?;
+                    Ok(Box::new(c) as Box<dyn DnsClient>)
+                })
                 .collect::<Result<_>>()?;
             let round_robin_doh = RoundRobinClient::new(doh_clients);
             let choice_client = ChoiceClient::new(client, round_robin_doh, doh_domains);
@@ -332,7 +342,7 @@ fn create_doh_if_needed(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, path::PathBuf, time::Duration};
+    use std::{collections::HashSet, net::Ipv4Addr, path::PathBuf, time::Duration};
 
     use anyhow::Result;
     use bytes::Bytes;
@@ -415,6 +425,7 @@ mod tests {
             }),
             data_dir,
             cache_max_size: None,
+            ecs_override_ip: Ipv4Addr::new(185, 76, 151, 0),
         })
         .await?;
 
