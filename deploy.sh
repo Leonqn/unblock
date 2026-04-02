@@ -1,19 +1,19 @@
 #!/bin/bash
 set -e
 
-ROUTER_HOST="192.168.1.1"
+ROUTER_HOST="192.168.2.1"
 ROUTER_PORT=222
 ROUTER_USER="root"
 ROUTER_PASS="keenetic"
 BINARY_NAME="reroute"
-TARGET="mipsel-unknown-linux-musl"
+TARGET="aarch64-unknown-linux-musl"
 REMOTE_BIN="/opt/bin/${BINARY_NAME}"
 SERVICE="/opt/etc/init.d/S99reroute"
 HTTP_PORT=8888
 
 echo "==> Building for ${TARGET}..."
 docker run --rm -v "$(pwd)":/app -w /app \
-  messense/rust-musl-cross:mipsel-musl \
+  messense/rust-musl-cross:aarch64-musl \
   cargo build --release --target "${TARGET}"
 
 RELEASE_DIR="target/${TARGET}/release"
