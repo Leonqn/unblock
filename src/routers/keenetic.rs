@@ -101,6 +101,19 @@ impl KeeneticClient {
         Ok(devices)
     }
 
+    pub async fn get_connections(&self) -> Result<serde_json::Value> {
+        let uri = self.base_url.join("/rci/")?.to_string();
+        let body = r#"[{"show":{"ip":{"conntrack":{"format":"standard","details":"interfaces"}}}},{"show":{"ipv6":{"conntrack":{"format":"standard","details":"interfaces"}}}},{"show":{"ip":{"hotspot":{"details":"none"}}}},{"show":{"sc":{"interface":{}}}},{"show":{"interface":{"details":"yes"}}},{"show":{"sc":{"interface":{"ipoe":{"parent":""}}}}},{"show":{"system":{}}}]"#;
+        let req = Request::builder()
+            .method(Method::POST)
+            .uri(&uri)
+            .body(string_body(body.to_owned()))?;
+        let res = self.http.request(req).await?;
+        let body = res.into_body().collect().await?.to_bytes();
+        let value: serde_json::Value = serde_json::from_slice(&body)?;
+        Ok(value)
+    }
+
     async fn send_rci(&self, request_body: String) -> Result<()> {
         let uri = self.base_url.join("/rci/")?.to_string();
         let req = Request::builder()
