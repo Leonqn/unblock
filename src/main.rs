@@ -12,8 +12,9 @@ use crate::web::AppState;
 use anyhow::Result;
 use arc_swap::ArcSwapOption;
 use dns::client::{
-    AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, DomainRoutingClient, Either,
-    HostsClient, RerouteClient, RetryClient, RoundRobinClient, StatsClient, UdpClient,
+    AdsBlockClient, CachedClient, ChoiceClient, DnsCache, DnsClient, DohClient,
+    DomainRoutingClient, Either, HostsClient, RerouteClient, RetryClient, RoundRobinClient,
+    StatsClient, UdpClient,
 };
 use domains_filter::DomainsFilter;
 use futures_util::{stream, StreamExt};
@@ -97,6 +98,7 @@ async fn main() -> Result<()> {
         whitelist_ips: app_state.whitelist_ips,
         whitelist_ip_rules: app_state.whitelist_ip_rules,
         hosts: hosts_entries,
+        dns_cache: app_state.dns_cache,
         config_path,
     });
 
@@ -174,6 +176,7 @@ struct PartialAppState {
     whitelist_ips: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
     whitelist_ip_rules: Arc<ArcSwapOption<Vec<String>>>,
     rerouter: Option<Rerouter>,
+    dns_cache: DnsCache,
 }
 
 struct DnsClientConfig {
@@ -218,7 +221,7 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         client: reroute_client,
         routed_snapshot,
     } = create_reroute_if_needed(retry_client, reroute_config, &data_dir)?;
-    let cached_client = CachedClient::new(reroute_client, cache_max_size);
+    let (cached_client, dns_cache) = CachedClient::new(reroute_client, cache_max_size);
     let hosts_client = HostsClient::new(cached_client, hosts);
     let ads_block_client = create_ads_block_if_needed(hosts_client, ads_block)?;
 
@@ -230,6 +233,7 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         whitelist_ips: routed_snapshot.whitelist_ips,
         whitelist_ip_rules: routed_snapshot.whitelist_ip_rules,
         rerouter: routed_snapshot.rerouter,
+        dns_cache,
     };
     Ok((ads_block_client, state))
 }

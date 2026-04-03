@@ -38,6 +38,7 @@ pub struct AppState {
     pub whitelist_ips: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
     pub whitelist_ip_rules: Arc<ArcSwapOption<Vec<String>>>,
     pub hosts: Arc<ArcSwapOption<HashMap<String, Ipv4Addr>>>,
+    pub dns_cache: crate::dns::client::DnsCache,
     pub config_path: PathBuf,
 }
 
@@ -320,6 +321,7 @@ async fn handle_request(
                             Ok(()) => {
                                 state.whitelist_filter.store(Some(Arc::new(filter)));
                                 state.whitelist_rules.store(Some(Arc::new(new_rules)));
+                                state.dns_cache.clear();
                                 json_response(&serde_json::json!({"status": "ok"}))
                             }
                             Err(e) => error_response(
@@ -360,6 +362,7 @@ async fn handle_request(
                             Ok(()) => {
                                 state.whitelist_ips.store(Some(Arc::new(nets)));
                                 state.whitelist_ip_rules.store(Some(Arc::new(new_rules)));
+                                state.dns_cache.clear();
                                 json_response(&serde_json::json!({"status": "ok"}))
                             }
                             Err(e) => error_response(
@@ -401,6 +404,7 @@ async fn handle_request(
                         Ok(hosts_map) => match persist_hosts(&state.config_path, &new_hosts) {
                             Ok(()) => {
                                 state.hosts.store(Some(Arc::new(hosts_map)));
+                                state.dns_cache.clear();
                                 json_response(&serde_json::json!({"status": "ok"}))
                             }
                             Err(e) => error_response(

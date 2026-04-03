@@ -86,6 +86,10 @@ where
         removed
     }
 
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+
     pub fn get<Q>(&self, k: &Q) -> Option<&V>
     where
         K: Borrow<Q>,
