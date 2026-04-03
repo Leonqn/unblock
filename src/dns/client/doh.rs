@@ -82,7 +82,6 @@ impl DnsClient for DohClient {
             retry_response.append_trace("ecs-override-retry");
             return Ok(retry_response);
         }
-        let mut response = response;
         Ok(response)
     }
 }
