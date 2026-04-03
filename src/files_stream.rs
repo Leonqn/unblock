@@ -120,10 +120,6 @@ impl CachedMeta {
             let _ = tokio::fs::write(meta_path, json).await;
         }
     }
-
-    fn is_empty(&self) -> bool {
-        self.etag.is_none() && self.last_modified.is_none()
-    }
 }
 
 /// Creates a stream that downloads a file to disk using streaming (chunked) download.
@@ -136,18 +132,17 @@ pub fn create_files_stream_to_disk(
 ) -> Result<impl Stream<Item = PathBuf>> {
     let http = build_http_client()?;
     let cached_meta = CachedMeta::load(&dest_path);
-    let has_file = dest_path.exists() && !cached_meta.is_empty();
     Ok(stream::unfold(
-        (http, cached_meta, file_url, dest_path, !has_file),
+        (http, cached_meta, file_url, dest_path, true),
         move |(http, meta, url, dest_path, first_request)| async move {
+            if !first_request {
+                sleep(update_interval).await;
+            }
             loop {
                 info!("Checking {} for new version (disk mode)", url);
                 match try_download_to_file(&http, url.clone(), &meta, &dest_path).await {
                     Ok(Some(new_meta)) => {
                         new_meta.save(&dest_path).await;
-                        if !first_request {
-                            sleep(update_interval).await;
-                        }
                         return Some((dest_path.clone(), (http, new_meta, url, dest_path, false)));
                     }
                     Ok(None) => {

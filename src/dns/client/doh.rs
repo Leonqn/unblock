@@ -42,15 +42,6 @@ impl DohClient {
         })
     }
 
-    fn append_resolved_trace(response: &mut Response) {
-        if let Ok(msg) = response.parse() {
-            let ips: Vec<_> = msg.ips().map(|ip| ip.to_string()).collect();
-            if !ips.is_empty() {
-                response.append_trace(&format!("resolved [{}]", ips.join(", ")));
-            }
-        }
-    }
-
     async fn do_request(&self, query: &Query) -> Result<Response> {
         let encoded = URL_SAFE_NO_PAD.encode(query.bytes().as_ref());
         let mut url = self.server_url.clone();
@@ -89,11 +80,9 @@ impl DnsClient for DohClient {
             let query_ecs = query.with_ecs(self.ecs_override_ip);
             let mut retry_response = self.do_request(&query_ecs).await?;
             retry_response.append_trace("ecs-override-retry");
-            Self::append_resolved_trace(&mut retry_response);
             return Ok(retry_response);
         }
         let mut response = response;
-        Self::append_resolved_trace(&mut response);
         Ok(response)
     }
 }

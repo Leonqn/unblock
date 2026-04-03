@@ -28,11 +28,7 @@ impl<C: DnsClient> DnsClient for HostsClient<C> {
                 for domain in parsed.domains() {
                     if let Some(&ip) = hosts.get(&domain) {
                         info!("hosts: {} -> {}", domain, ip);
-                        let mut response = if query.is_aaaa() {
-                            query.empty_response()
-                        } else {
-                            query.response_with_ip(ip)
-                        };
+                        let mut response = query.response_with_ip(ip);
                         response.append_trace(&format!("hosts: {ip}"));
                         return Ok(response);
                     }
