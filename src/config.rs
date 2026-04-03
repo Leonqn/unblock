@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
     path::PathBuf,
     time::Duration,
@@ -23,6 +24,8 @@ pub struct Config {
     pub data_dir: String,
     #[serde(default = "default_ecs_override_ip")]
     pub ecs_override_ip: Ipv4Addr,
+    #[serde(default)]
+    pub hosts: HashMap<String, Ipv4Addr>,
 }
 
 impl Config {

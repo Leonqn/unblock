@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -36,6 +37,7 @@ pub struct AppState {
     pub whitelist_rules: Arc<ArcSwapOption<Vec<String>>>,
     pub whitelist_ips: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
     pub whitelist_ip_rules: Arc<ArcSwapOption<Vec<String>>>,
+    pub hosts: Arc<ArcSwapOption<HashMap<String, Ipv4Addr>>>,
     pub config_path: PathBuf,
 }
 
@@ -122,6 +124,15 @@ fn parse_query_param(query_str: &str, name: &str) -> Option<String> {
     url::form_urlencoded::parse(query_str.as_bytes())
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.into_owned())
+}
+
+fn persist_hosts(config_path: &Path, hosts: &HashMap<String, String>) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(config_path)?;
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&content)?;
+    value["hosts"] = serde_yaml::to_value(hosts)?;
+    let new_content = serde_yaml::to_string(&value)?;
+    std::fs::write(config_path, new_content)?;
+    Ok(())
 }
 
 fn persist_config_field(config_path: &Path, field: &str, rules: &[String]) -> anyhow::Result<()> {
@@ -361,6 +372,48 @@ async fn handle_request(
                         error_response(StatusCode::BAD_REQUEST, &format!("Invalid IP/CIDR: {}", e))
                     }
                 },
+                Err(e) => error_response(StatusCode::BAD_REQUEST, &format!("Invalid JSON: {}", e)),
+            }
+        }
+        (&Method::GET, "/api/config/hosts") => {
+            let hosts = state.hosts.load_full();
+            let hosts: HashMap<String, String> = hosts
+                .as_deref()
+                .map(|h| h.iter().map(|(k, v)| (k.clone(), v.to_string())).collect())
+                .unwrap_or_default();
+            json_response(&hosts)
+        }
+        (&Method::PUT, "/api/config/hosts") => {
+            let body = req
+                .into_body()
+                .collect()
+                .await
+                .map(|c| c.to_bytes())
+                .unwrap_or_default();
+
+            match serde_json::from_slice::<HashMap<String, String>>(&body) {
+                Ok(new_hosts) => {
+                    let parsed: Result<HashMap<String, Ipv4Addr>, _> = new_hosts
+                        .iter()
+                        .map(|(k, v)| v.parse::<Ipv4Addr>().map(|ip| (k.clone(), ip)))
+                        .collect();
+                    match parsed {
+                        Ok(hosts_map) => match persist_hosts(&state.config_path, &new_hosts) {
+                            Ok(()) => {
+                                state.hosts.store(Some(Arc::new(hosts_map)));
+                                json_response(&serde_json::json!({"status": "ok"}))
+                            }
+                            Err(e) => error_response(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                &format!("Failed to save config: {}", e),
+                            ),
+                        },
+                        Err(e) => error_response(
+                            StatusCode::BAD_REQUEST,
+                            &format!("Invalid IP address: {}", e),
+                        ),
+                    }
+                }
                 Err(e) => error_response(StatusCode::BAD_REQUEST, &format!("Invalid JSON: {}", e)),
             }
         }

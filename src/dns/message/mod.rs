@@ -75,6 +75,25 @@ impl Query {
         pos + 2 <= bytes.len() && bytes[pos] == 0x00 && bytes[pos + 1] == 0x1C
     }
 
+    /// Build a DNS response with a single A record pointing to the given IP.
+    pub fn response_with_ip(&self, ip: Ipv4Addr) -> Response {
+        let mut resp = self.empty_response();
+        let mut buf = BytesMut::from(resp.response.as_ref());
+        // Set ANCOUNT = 1
+        buf[6..8].copy_from_slice(&1u16.to_be_bytes());
+        // Append answer: NAME (pointer to question at offset 12), TYPE=A, CLASS=IN, TTL=300, RDLENGTH=4, RDATA
+        buf.extend_from_slice(&[
+            0xC0, 0x0C, // Name: pointer to offset 12 (question name)
+            0x00, 0x01, // Type: A
+            0x00, 0x01, // Class: IN
+            0x00, 0x00, 0x01, 0x2C, // TTL: 300
+            0x00, 0x04, // RDLENGTH: 4
+        ]);
+        buf.extend_from_slice(&ip.octets());
+        resp.response = buf.freeze();
+        resp
+    }
+
     /// Build an empty NOERROR response from this query (no answer records).
     pub fn empty_response(&self) -> Response {
         let mut buf = BytesMut::from(self.request.as_ref());

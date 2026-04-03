@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     sync::Arc,
@@ -13,7 +13,7 @@ use anyhow::Result;
 use arc_swap::ArcSwapOption;
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsClient, DohClient, DomainRoutingClient, Either,
-    RerouteClient, RetryClient, RoundRobinClient, StatsClient, UdpClient,
+    HostsClient, RerouteClient, RetryClient, RoundRobinClient, StatsClient, UdpClient,
 };
 use domains_filter::DomainsFilter;
 use futures_util::{stream, StreamExt};
@@ -62,6 +62,11 @@ async fn main() -> Result<()> {
         Arc::new(StatsCollector::new(data_dir.join("stats"), router_for_stats).await);
 
     let conntrack_poll_interval = config.reroute.as_ref().map(|r| r.conntrack_poll_interval);
+    let hosts_entries: Arc<ArcSwapOption<HashMap<String, Ipv4Addr>>> = if config.hosts.is_empty() {
+        Arc::new(ArcSwapOption::empty())
+    } else {
+        Arc::new(ArcSwapOption::from_pointee(config.hosts))
+    };
     let (dns_pipeline, app_state) = create_dns_client(DnsClientConfig {
         doh_upstreams: config.doh_upstreams,
         dns_routing: config.dns_routing,
@@ -72,6 +77,7 @@ async fn main() -> Result<()> {
         data_dir,
         cache_max_size: config.cache_max_size,
         ecs_override_ip: config.ecs_override_ip,
+        hosts: hosts_entries.clone(),
     })
     .await?;
 
@@ -90,6 +96,7 @@ async fn main() -> Result<()> {
         whitelist_rules: app_state.whitelist_rules,
         whitelist_ips: app_state.whitelist_ips,
         whitelist_ip_rules: app_state.whitelist_ip_rules,
+        hosts: hosts_entries,
         config_path,
     });
 
@@ -179,6 +186,7 @@ struct DnsClientConfig {
     data_dir: PathBuf,
     cache_max_size: Option<usize>,
     ecs_override_ip: Ipv4Addr,
+    hosts: Arc<ArcSwapOption<HashMap<String, Ipv4Addr>>>,
 }
 
 async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, PartialAppState)> {
@@ -192,6 +200,7 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         data_dir,
         cache_max_size,
         ecs_override_ip,
+        hosts,
     } = cfg;
     let udp_client = UdpClient::new(udp_upstream).await?;
     let doh = create_doh_if_needed(udp_client, doh_upstreams, ecs_override_ip)?;
@@ -210,7 +219,8 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         routed_snapshot,
     } = create_reroute_if_needed(retry_client, reroute_config, &data_dir)?;
     let cached_client = CachedClient::new(reroute_client, cache_max_size);
-    let ads_block_client = create_ads_block_if_needed(cached_client, ads_block)?;
+    let hosts_client = HostsClient::new(cached_client, hosts);
+    let ads_block_client = create_ads_block_if_needed(hosts_client, ads_block)?;
 
     let state = PartialAppState {
         routed_snapshot: routed_snapshot.routed_snapshot,
@@ -405,7 +415,9 @@ fn create_doh_if_needed(
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, net::Ipv4Addr, path::PathBuf, time::Duration};
+    use std::{net::Ipv4Addr, path::PathBuf, sync::Arc, time::Duration};
+
+    use arc_swap::ArcSwapOption;
 
     use anyhow::Result;
     use bytes::Bytes;
@@ -486,6 +498,7 @@ mod tests {
             data_dir,
             cache_max_size: None,
             ecs_override_ip: Ipv4Addr::new(185, 76, 151, 0),
+            hosts: Arc::new(ArcSwapOption::empty()),
         })
         .await?;
 
