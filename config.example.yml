@@ -10,8 +10,8 @@ dns_routing:
     doh_upstreams:
       - https://common.dot.dns.yandex.net/dns-query
 reroute:
- rvzdata_url: https://raw.githubusercontent.com/fz139/blocked-domains-resolves/refs/heads/main/rvzdata.json
- inside_raw_url: https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Russia/inside-raw.lst
+ domain_lsts:
+   - https://raw.githubusercontent.com/itdoginfo/allow-domains/refs/heads/main/Russia/inside-raw.lst
  blacklist_update_interval: 60 minutes
  router_api_uri: http://127.0.0.1:79
  route_interface: Wireguard0

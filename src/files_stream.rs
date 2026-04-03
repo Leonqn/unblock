@@ -99,7 +99,6 @@ async fn try_get_file(
 
 /// Creates a stream that downloads a file to disk using streaming (chunked) download.
 /// Each stream item is the path to the downloaded file.
-/// Memory usage: ~chunk size (~64 KB) instead of full file in RAM.
 pub fn create_files_stream_to_disk(
     file_url: Url,
     update_interval: Duration,

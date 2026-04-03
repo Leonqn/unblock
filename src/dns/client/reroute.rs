@@ -51,7 +51,7 @@ impl<C> RerouteClient<C> {
         let manual_dns_signals: Vec<bool> = match filter.as_deref() {
             Some(f) => parsed_response
                 .domains()
-                .filter_map(|d| f.match_domain(&d).map(|m| m.is_allowed))
+                .filter_map(|d| f.match_domain(&d).map(|m| m.is_allowed()))
                 .collect(),
             None => vec![],
         };

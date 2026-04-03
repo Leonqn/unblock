@@ -64,8 +64,8 @@ pub struct AdsBlock {
 
 #[derive(Deserialize)]
 pub struct Reroute {
-    pub rvzdata_url: Option<String>,
-    pub inside_raw_url: Option<String>,
+    #[serde(default)]
+    pub domain_lsts: Vec<String>,
     #[serde(with = "humantime_serde")]
     pub blacklist_update_interval: Duration,
     pub router_api_uri: String,

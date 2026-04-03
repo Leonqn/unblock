@@ -280,7 +280,7 @@ async fn handle_request(
             match serde_json::from_slice::<Vec<String>>(&body) {
                 Ok(new_rules) => {
                     let rules_str = new_rules.join("\n");
-                    match DomainsFilter::new(&rules_str, None) {
+                    match DomainsFilter::new(&rules_str) {
                         Ok(filter) => match persist_whitelist(&state.config_path, &new_rules) {
                             Ok(()) => {
                                 state.whitelist_filter.store(Some(Arc::new(filter)));

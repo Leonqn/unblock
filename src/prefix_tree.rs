@@ -18,15 +18,21 @@ impl PrefixTree {
                 let terminal = parts.is_empty();
                 node.entry(part)
                     .and_modify(|x| {
-                        x.terminal = x.terminal || terminal;
-                        add(&mut x.children, parts);
+                        if terminal {
+                            x.terminal = true;
+                            x.children.clear();
+                        } else if !x.terminal {
+                            add(&mut x.children, parts);
+                        }
                     })
                     .or_insert_with(|| {
                         let mut new_node = Node {
                             children: BTreeMap::new(),
                             terminal,
                         };
-                        add(&mut new_node.children, parts);
+                        if !terminal {
+                            add(&mut new_node.children, parts);
+                        }
                         new_node
                     });
             }
@@ -39,6 +45,9 @@ impl PrefixTree {
     pub fn contains(&self, domain: &str) -> bool {
         fn contains(node: &Node, parts: &mut Vec<&str>) -> bool {
             if let Some(part) = parts.pop() {
+                if node.terminal {
+                    return true;
+                }
                 if let Some(node) = node.children.get(part) {
                     contains(node, parts)
                 } else {
@@ -71,6 +80,38 @@ mod tests {
         assert!(tree.contains("www.asd.tu"));
         assert!(tree.contains("asd.tu"));
         assert!(!tree.contains("tu"));
+    }
+
+    #[test]
+    fn adding_parent_domain_removes_children() {
+        let mut tree = PrefixTree::default();
+        tree.add("www.test.ru".to_owned());
+        tree.add("api.test.ru".to_owned());
+        tree.add("test.ru".to_owned());
+
+        assert!(tree.contains("test.ru"));
+        assert!(tree.contains("www.test.ru"));
+        assert!(tree.contains("api.test.ru"));
+        assert!(tree.contains("anything.test.ru"));
+        // children should be pruned
+        assert!(tree.root.children["ru"].children["test"]
+            .children
+            .is_empty());
+    }
+
+    #[test]
+    fn specific_domain_does_not_override_parent() {
+        let mut tree = PrefixTree::default();
+        tree.add("test.ru".to_owned());
+        tree.add("www.test.ru".to_owned());
+
+        assert!(tree.contains("test.ru"));
+        assert!(tree.contains("www.test.ru"));
+        assert!(tree.contains("anything.test.ru"));
+        // children should stay empty — www.test.ru is redundant
+        assert!(tree.root.children["ru"].children["test"]
+            .children
+            .is_empty());
     }
 
     #[quickcheck]

@@ -34,13 +34,13 @@ impl<C: DnsClient> DnsClient for AdsBlockClient<C> {
                 .and_then(|filter| Some((filter.match_domain(&domain)?, domain)))
         });
         match match_result {
-            Some((match_result, domain)) if !match_result.is_allowed => {
-                info!("Domain {} blocked by rule {:}", domain, match_result.rule);
+            Some((match_result, domain)) if !match_result.is_allowed() => {
+                info!("Domain {} {}", domain, match_result);
                 let mut blocked_resp = BytesMut::from(query.bytes().as_ref());
                 blocked_resp[2] = 0x81;
                 blocked_resp[3] = 0x83;
                 let mut response = Response::from_bytes(blocked_resp.freeze())?;
-                response.append_trace(&format!("ads blocked: {}", match_result.rule));
+                response.append_trace(&format!("ads: {}", match_result));
                 Ok(response)
             }
             _ => self.dns_client.send(query).await,

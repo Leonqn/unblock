@@ -26,7 +26,6 @@ use url::Url;
 mod blacklist;
 mod cache;
 mod config;
-mod disk_blacklist;
 mod dns;
 mod domains_filter;
 mod files_stream;
@@ -182,7 +181,7 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         routed_snapshot,
     } = create_reroute_if_needed(retry_client, reroute_config, &data_dir)?;
     let cached_client = CachedClient::new(reroute_client, cache_max_size);
-    let ads_block_client = create_ads_block_if_needed(cached_client, ads_block, &data_dir)?;
+    let ads_block_client = create_ads_block_if_needed(cached_client, ads_block)?;
 
     let state = PartialAppState {
         routed_snapshot: routed_snapshot.routed_snapshot,
@@ -196,7 +195,6 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
 fn create_ads_block_if_needed(
     client: impl DnsClient,
     config: Option<AdsBlock>,
-    data_dir: &Path,
 ) -> Result<impl DnsClient> {
     match config {
         Some(config) => {
@@ -204,7 +202,6 @@ fn create_ads_block_if_needed(
                 config.filter_uri.parse()?,
                 config.filter_update_interval,
                 config.manual_rules,
-                Some(data_dir.to_path_buf()),
             )?;
             let last_item = LastItem::new(domains_filter_stream);
             Ok(Either::Left(AdsBlockClient::new(client, last_item)))
@@ -225,17 +222,13 @@ fn create_reroute_if_needed(
 
             let mut blacklist_last_items: Vec<LastItem<Box<dyn blacklist::Blacklist>>> = Vec::new();
 
-            if let Some(url) = config.rvzdata_url {
-                let stream = blacklist::rvzdata(
+            for (i, url) in config.domain_lsts.iter().enumerate() {
+                let dest = data_dir.join(format!("domain_lst_{i}.lst"));
+                let stream = blacklist::download_and_parse(
                     url.parse()?,
                     config.blacklist_update_interval,
-                    data_dir.to_path_buf(),
+                    dest,
                 )?;
-                let last_item = LastItem::new(stream);
-                blacklist_last_items.push(last_item);
-            }
-            if let Some(url) = config.inside_raw_url {
-                let stream = blacklist::inside_raw(url.parse()?, config.blacklist_update_interval)?;
                 let last_item = LastItem::new(stream);
                 blacklist_last_items.push(last_item);
             }
@@ -255,7 +248,6 @@ fn create_reroute_if_needed(
             let raw_rules = config.manual_whitelist_dns.unwrap_or_default();
             let whitelist_filter = Arc::new(ArcSwapOption::from_pointee(DomainsFilter::new(
                 &raw_rules.join("\n"),
-                None,
             )?));
             let whitelist_rules = Arc::new(ArcSwapOption::from_pointee(raw_rules));
 
@@ -421,11 +413,7 @@ mod tests {
                 manual_rules: vec!["@||youtube.com".to_owned()],
             }),
             reroute_config: Some(Reroute {
-                rvzdata_url: Some(
-                    "https://raw.githubusercontent.com/zapret-info/z-i/master/dump-00.csv"
-                        .to_owned(),
-                ),
-                inside_raw_url: None,
+                domain_lsts: vec![],
                 blacklist_update_interval: Duration::from_secs(10),
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),
