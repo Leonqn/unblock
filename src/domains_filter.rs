@@ -22,12 +22,6 @@ impl MatchResult<'_> {
     pub fn is_allowed(&self) -> bool {
         matches!(self, MatchResult::Allow(_))
     }
-
-    pub fn rule(&self) -> &str {
-        match self {
-            MatchResult::Allow(rule) | MatchResult::Block(rule) => rule,
-        }
-    }
 }
 
 impl std::fmt::Display for MatchResult<'_> {

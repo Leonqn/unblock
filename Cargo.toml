@@ -41,6 +41,7 @@ regex = "1"
 arc-swap = "1"
 serde_yaml = "0.9"
 fure = "0.6"
+ipnet = "2"
 tempfile = "3"
 async-compression = { version = "0.4", features = ["tokio", "gzip"] }
 

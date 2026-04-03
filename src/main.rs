@@ -5,6 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use ipnet::Ipv4Net;
+
 use crate::config::{AdsBlock, Config, DnsRoute, Reroute, Retry};
 use crate::web::AppState;
 use anyhow::Result;
@@ -26,6 +28,7 @@ use url::Url;
 mod blacklist;
 mod cache;
 mod config;
+mod conntrack;
 mod dns;
 mod domains_filter;
 mod files_stream;
@@ -54,9 +57,11 @@ async fn main() -> Result<()> {
         )))
     });
 
+    let router_for_polling = router_for_stats.clone();
     let stats_collector =
         Arc::new(StatsCollector::new(data_dir.join("stats"), router_for_stats).await);
 
+    let conntrack_poll_interval = config.reroute.as_ref().map(|r| r.conntrack_poll_interval);
     let (dns_pipeline, app_state) = create_dns_client(DnsClientConfig {
         doh_upstreams: config.doh_upstreams,
         dns_routing: config.dns_routing,
@@ -73,6 +78,9 @@ async fn main() -> Result<()> {
     let dns_pipeline = StatsClient::new(dns_pipeline, stats_collector.clone());
     let dns_pipeline: Arc<dyn DnsClient> = Arc::new(dns_pipeline);
 
+    let rerouter_for_polling = app_state.rerouter.clone();
+    let whitelist_ips_for_polling = app_state.whitelist_ips.clone();
+
     let app_state = Arc::new(AppState {
         routed_snapshot: app_state.routed_snapshot,
         dns_pipeline: dns_pipeline.clone(),
@@ -80,6 +88,8 @@ async fn main() -> Result<()> {
         route_ttl_secs: app_state.route_ttl_secs,
         whitelist_filter: app_state.whitelist_filter,
         whitelist_rules: app_state.whitelist_rules,
+        whitelist_ips: app_state.whitelist_ips,
+        whitelist_ip_rules: app_state.whitelist_ip_rules,
         config_path,
     });
 
@@ -96,6 +106,19 @@ async fn main() -> Result<()> {
                 stats.save_to_disk().await;
             }
         });
+    }
+
+    if let (Some(rerouter), Some(router_client), Some(poll_interval)) = (
+        rerouter_for_polling,
+        router_for_polling,
+        conntrack_poll_interval,
+    ) {
+        conntrack::spawn_polling(
+            router_client,
+            rerouter,
+            whitelist_ips_for_polling,
+            poll_interval,
+        );
     }
 
     let request_handler = move |query| {
@@ -131,6 +154,9 @@ struct RerouteStateSnapshot {
     route_ttl_secs: Option<u64>,
     whitelist_filter: Arc<ArcSwapOption<DomainsFilter>>,
     whitelist_rules: Arc<ArcSwapOption<Vec<String>>>,
+    whitelist_ips: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
+    whitelist_ip_rules: Arc<ArcSwapOption<Vec<String>>>,
+    rerouter: Option<Rerouter>,
 }
 
 struct PartialAppState {
@@ -138,6 +164,9 @@ struct PartialAppState {
     route_ttl_secs: Option<u64>,
     whitelist_filter: Arc<ArcSwapOption<DomainsFilter>>,
     whitelist_rules: Arc<ArcSwapOption<Vec<String>>>,
+    whitelist_ips: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
+    whitelist_ip_rules: Arc<ArcSwapOption<Vec<String>>>,
+    rerouter: Option<Rerouter>,
 }
 
 struct DnsClientConfig {
@@ -188,6 +217,9 @@ async fn create_dns_client(cfg: DnsClientConfig) -> Result<(impl DnsClient, Part
         route_ttl_secs: routed_snapshot.route_ttl_secs,
         whitelist_filter: routed_snapshot.whitelist_filter,
         whitelist_rules: routed_snapshot.whitelist_rules,
+        whitelist_ips: routed_snapshot.whitelist_ips,
+        whitelist_ip_rules: routed_snapshot.whitelist_ip_rules,
+        rerouter: routed_snapshot.rerouter,
     };
     Ok((ads_block_client, state))
 }
@@ -251,11 +283,16 @@ fn create_reroute_if_needed(
             )?));
             let whitelist_rules = Arc::new(ArcSwapOption::from_pointee(raw_rules));
 
+            let ip_nets = parse_ip_whitelist(&config.manual_whitelist)?;
+            let whitelist_ips = Arc::new(ArcSwapOption::from_pointee(ip_nets));
+            let whitelist_ip_rules = Arc::new(ArcSwapOption::from_pointee(config.manual_whitelist));
+
+            let rerouter_clone = rerouter.clone();
             let reroute_client = RerouteClient::new(
                 client,
                 rerouter,
                 whitelist_filter.clone(),
-                config.manual_whitelist.unwrap_or_default(),
+                whitelist_ips.clone(),
                 blacklists_for_client,
             );
             Ok(RerouteResult {
@@ -265,6 +302,9 @@ fn create_reroute_if_needed(
                     route_ttl_secs: route_ttl.map(|d| d.as_secs()),
                     whitelist_filter,
                     whitelist_rules,
+                    whitelist_ips,
+                    whitelist_ip_rules,
+                    rerouter: Some(rerouter_clone),
                 },
             })
         }
@@ -275,9 +315,26 @@ fn create_reroute_if_needed(
                 route_ttl_secs: None,
                 whitelist_filter: Arc::new(ArcSwapOption::empty()),
                 whitelist_rules: Arc::new(ArcSwapOption::empty()),
+                whitelist_ips: Arc::new(ArcSwapOption::empty()),
+                whitelist_ip_rules: Arc::new(ArcSwapOption::empty()),
+                rerouter: None,
             },
         }),
     }
+}
+
+pub fn parse_ip_whitelist(rules: &[String]) -> Result<Vec<Ipv4Net>> {
+    rules
+        .iter()
+        .map(|s| {
+            if s.contains('/') {
+                s.parse::<Ipv4Net>().map_err(Into::into)
+            } else {
+                let ip: Ipv4Addr = s.parse()?;
+                Ok(Ipv4Net::new(ip, 32)?)
+            }
+        })
+        .collect()
 }
 
 fn create_domain_routing_if_needed(
@@ -417,9 +474,10 @@ mod tests {
                 blacklist_update_interval: Duration::from_secs(10),
                 router_api_uri: "http://127.0.0.1:3030".to_owned(),
                 route_interface: "Ads".to_owned(),
-                manual_whitelist: Some(HashSet::new()),
+                manual_whitelist: vec![],
                 route_ttl: Some(Duration::from_secs(10)),
                 manual_whitelist_dns: Some(Vec::new()),
+                conntrack_poll_interval: Duration::from_secs(10),
             }),
             retry_config: Some(Retry {
                 attempts_count: 3,

@@ -25,6 +25,7 @@ pub enum RerouteResponse {
     Skipped,
 }
 
+#[derive(Clone)]
 pub struct Rerouter {
     router_requests: UnboundedSender<AddRoutesRequest>,
     routed_snapshot: Arc<ArcSwapOption<Vec<RoutedEntry>>>,

@@ -1,5 +1,4 @@
 use std::{
-    collections::HashSet,
     net::{Ipv4Addr, SocketAddr},
     path::PathBuf,
     time::Duration,
@@ -70,11 +69,19 @@ pub struct Reroute {
     pub blacklist_update_interval: Duration,
     pub router_api_uri: String,
     pub route_interface: String,
-    pub manual_whitelist: Option<HashSet<Ipv4Addr>>,
+    #[serde(default)]
+    pub manual_whitelist: Vec<String>,
     pub manual_whitelist_dns: Option<Vec<String>>,
     #[serde(default)]
     #[serde(with = "humantime_serde")]
     pub route_ttl: Option<Duration>,
+    #[serde(default = "default_conntrack_poll_interval")]
+    #[serde(with = "humantime_serde")]
+    pub conntrack_poll_interval: Duration,
+}
+
+fn default_conntrack_poll_interval() -> Duration {
+    Duration::from_secs(10)
 }
 
 fn default_data_dir() -> String {

@@ -14,6 +14,42 @@ use url::Url;
 
 use super::RouterClient;
 
+#[derive(Deserialize)]
+struct ConntrackResponse {
+    show: ConntrackShow,
+}
+
+#[derive(Deserialize)]
+struct ConntrackShow {
+    ip: ConntrackIp,
+}
+
+#[derive(Deserialize)]
+struct ConntrackIp {
+    conntrack: ConntrackData,
+}
+
+#[derive(Deserialize)]
+struct ConntrackData {
+    ipv4: ConntrackEntries,
+}
+
+#[derive(Deserialize)]
+struct ConntrackEntries {
+    #[serde(default)]
+    entry: Vec<ConntrackEntry>,
+}
+
+#[derive(Deserialize)]
+pub struct ConntrackEntry {
+    pub orig: ConntrackEndpoint,
+}
+
+#[derive(Deserialize)]
+pub struct ConntrackEndpoint {
+    pub dst: Ipv4Addr,
+}
+
 type BoxBody = http_body_util::combinators::BoxBody<Bytes, hyper::Error>;
 
 fn empty_body() -> BoxBody {
@@ -101,17 +137,17 @@ impl KeeneticClient {
         Ok(devices)
     }
 
-    pub async fn get_connections(&self) -> Result<serde_json::Value> {
+    pub async fn get_connections(&self) -> Result<Vec<ConntrackEntry>> {
         let uri = self.base_url.join("/rci/")?.to_string();
-        let body = r#"[{"show":{"ip":{"conntrack":{"format":"standard","details":"interfaces"}}}},{"show":{"ipv6":{"conntrack":{"format":"standard","details":"interfaces"}}}},{"show":{"ip":{"hotspot":{"details":"none"}}}},{"show":{"sc":{"interface":{}}}},{"show":{"interface":{"details":"yes"}}},{"show":{"sc":{"interface":{"ipoe":{"parent":""}}}}},{"show":{"system":{}}}]"#;
+        let body = r#"{"show":{"ip":{"conntrack":{"format":"standard"}}}}"#;
         let req = Request::builder()
             .method(Method::POST)
             .uri(&uri)
             .body(string_body(body.to_owned()))?;
         let res = self.http.request(req).await?;
         let body = res.into_body().collect().await?.to_bytes();
-        let value: serde_json::Value = serde_json::from_slice(&body)?;
-        Ok(value)
+        let resp: ConntrackResponse = serde_json::from_slice(&body)?;
+        Ok(resp.show.ip.conntrack.ipv4.entry)
     }
 
     async fn send_rci(&self, request_body: String) -> Result<()> {

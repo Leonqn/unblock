@@ -1,10 +1,10 @@
 use std::{
-    collections::HashSet,
     net::{IpAddr, Ipv4Addr},
     sync::Arc,
 };
 
 use arc_swap::ArcSwapOption;
+use ipnet::Ipv4Net;
 
 use super::DnsClient;
 use crate::{
@@ -22,7 +22,7 @@ pub struct RerouteClient<C> {
     client: C,
     rerouter: Rerouter,
     manual_dns_whitelist: Arc<ArcSwapOption<DomainsFilter>>,
-    manual_ip_whitelist: HashSet<Ipv4Addr>,
+    manual_ip_whitelist: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
     blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
 }
 
@@ -31,7 +31,7 @@ impl<C> RerouteClient<C> {
         client: C,
         rerouter: Rerouter,
         manual_dns_whitelist: Arc<ArcSwapOption<DomainsFilter>>,
-        manual_ip_whitelist: HashSet<Ipv4Addr>,
+        manual_ip_whitelist: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
         blacklists: Vec<LastItem<Box<dyn Blacklist>>>,
     ) -> Self {
         Self {
@@ -72,8 +72,13 @@ impl<C> RerouteClient<C> {
             .then(|| ipv4s(parsed_response))
             .into_iter()
             .flatten();
-        let manual_ips =
-            ipv4s(parsed_response).filter(move |ip| self.manual_ip_whitelist.contains(ip));
+        let whitelist = self.manual_ip_whitelist.load();
+        let manual_ips = ipv4s(parsed_response).filter(move |ip| {
+            whitelist
+                .as_deref()
+                .map(|nets| nets.iter().any(|net| net.contains(ip)))
+                .unwrap_or(false)
+        });
         blacklisted.chain(manual_ips)
     }
 }

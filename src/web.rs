@@ -14,6 +14,8 @@ use log::{debug, error, info};
 use serde::Serialize;
 use tokio::net::TcpListener;
 
+use ipnet::Ipv4Net;
+
 use crate::{
     dns::{client::DnsClient, message::Query},
     domains_filter::DomainsFilter,
@@ -32,6 +34,8 @@ pub struct AppState {
     pub route_ttl_secs: Option<u64>,
     pub whitelist_filter: Arc<ArcSwapOption<DomainsFilter>>,
     pub whitelist_rules: Arc<ArcSwapOption<Vec<String>>>,
+    pub whitelist_ips: Arc<ArcSwapOption<Vec<Ipv4Net>>>,
+    pub whitelist_ip_rules: Arc<ArcSwapOption<Vec<String>>>,
     pub config_path: PathBuf,
 }
 
@@ -118,6 +122,26 @@ fn parse_query_param(query_str: &str, name: &str) -> Option<String> {
     url::form_urlencoded::parse(query_str.as_bytes())
         .find(|(k, _)| k == name)
         .map(|(_, v)| v.into_owned())
+}
+
+fn persist_config_field(config_path: &Path, field: &str, rules: &[String]) -> anyhow::Result<()> {
+    let content = std::fs::read_to_string(config_path)?;
+    let mut value: serde_yaml::Value = serde_yaml::from_str(&content)?;
+
+    let reroute = value
+        .get_mut("reroute")
+        .ok_or_else(|| anyhow::anyhow!("No reroute section in config"))?;
+
+    let rules_value = if rules.is_empty() {
+        serde_yaml::Value::Sequence(vec![])
+    } else {
+        serde_yaml::to_value(rules)?
+    };
+    reroute[field] = rules_value;
+
+    let new_content = serde_yaml::to_string(&value)?;
+    std::fs::write(config_path, new_content)?;
+    Ok(())
 }
 
 fn persist_whitelist(config_path: &Path, rules: &[String]) -> anyhow::Result<()> {
@@ -298,6 +322,45 @@ async fn handle_request(
                         ),
                     }
                 }
+                Err(e) => error_response(StatusCode::BAD_REQUEST, &format!("Invalid JSON: {}", e)),
+            }
+        }
+        (&Method::GET, "/api/config/manual-whitelist") => {
+            let rules = state.whitelist_ip_rules.load_full();
+            let rules: Vec<String> = rules.as_deref().cloned().unwrap_or_default();
+            json_response(&rules)
+        }
+        (&Method::PUT, "/api/config/manual-whitelist") => {
+            let body = req
+                .into_body()
+                .collect()
+                .await
+                .map(|c| c.to_bytes())
+                .unwrap_or_default();
+
+            match serde_json::from_slice::<Vec<String>>(&body) {
+                Ok(new_rules) => match crate::parse_ip_whitelist(&new_rules) {
+                    Ok(nets) => {
+                        match persist_config_field(
+                            &state.config_path,
+                            "manual_whitelist",
+                            &new_rules,
+                        ) {
+                            Ok(()) => {
+                                state.whitelist_ips.store(Some(Arc::new(nets)));
+                                state.whitelist_ip_rules.store(Some(Arc::new(new_rules)));
+                                json_response(&serde_json::json!({"status": "ok"}))
+                            }
+                            Err(e) => error_response(
+                                StatusCode::INTERNAL_SERVER_ERROR,
+                                &format!("Failed to save config: {}", e),
+                            ),
+                        }
+                    }
+                    Err(e) => {
+                        error_response(StatusCode::BAD_REQUEST, &format!("Invalid IP/CIDR: {}", e))
+                    }
+                },
                 Err(e) => error_response(StatusCode::BAD_REQUEST, &format!("Invalid JSON: {}", e)),
             }
         }
