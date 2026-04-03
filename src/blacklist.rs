@@ -47,14 +47,12 @@ pub fn download_and_parse(
 }
 
 fn parse_text_dump_from_file(path: &std::path::Path) -> Result<PrefixTree> {
-    let dump = std::fs::read(path)?;
-    parse_text_dump(&dump)
-}
-
-fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
-    let text = std::str::from_utf8(dump)?;
+    use std::io::BufRead;
+    let file = std::fs::File::open(path)?;
+    let reader = std::io::BufReader::new(file);
     let mut tree = PrefixTree::default();
-    for line in text.lines() {
+    for line in reader.lines() {
+        let line = line?;
         let domain = line.trim().trim_start_matches('.');
         if !domain.is_empty() {
             tree.add(format!("*.{domain}"));
@@ -65,8 +63,20 @@ fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use crate::prefix_tree::PrefixTree;
     use anyhow::Result;
+
+    fn parse_text_dump(dump: &[u8]) -> Result<PrefixTree> {
+        let text = std::str::from_utf8(dump)?;
+        let mut tree = PrefixTree::default();
+        for line in text.lines() {
+            let domain = line.trim().trim_start_matches('.');
+            if !domain.is_empty() {
+                tree.add(format!("*.{domain}"));
+            }
+        }
+        Ok(tree)
+    }
 
     #[test]
     fn text_parse_test() -> Result<()> {

@@ -145,12 +145,22 @@ impl DomainsFilter {
             }
         }
 
+        let count_by_type = |rules: &[CompiledRule]| {
+            let (mut contains, mut glob, mut regex) = (0, 0, 0);
+            for rule in rules {
+                match &rule.matcher {
+                    RuleMatcher::Contains(_) => contains += 1,
+                    RuleMatcher::DomainGlob { .. } => glob += 1,
+                    RuleMatcher::Regex(_) => regex += 1,
+                }
+            }
+            (contains, glob, regex)
+        };
+        let (ac, ag, ar) = count_by_type(&allow_rules);
+        let (bc, bg, br) = count_by_type(&block_rules);
         info!(
-            "{} allow domains, {} block domains, {} allow rules, {} block rules",
-            allow_domains.len(),
-            block_domains.len(),
-            allow_rules.len(),
-            block_rules.len()
+            "Filter: {} allow domains, {} block domains, allow rules: {} contains / {} glob / {} regex, block rules: {} contains / {} glob / {} regex",
+            allow_domains.len(), block_domains.len(), ac, ag, ar, bc, bg, br
         );
 
         Ok(Self {

@@ -1,65 +1,64 @@
-use std::collections::BTreeMap;
-
 #[derive(Default, Debug)]
 pub struct PrefixTree {
     root: Node,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[derive(Debug, Default)]
 struct Node {
     terminal: bool,
-    children: BTreeMap<String, Node>,
+    children: Vec<(String, Node)>,
+}
+
+impl Node {
+    fn find(&self, key: &str) -> Option<&Node> {
+        self.children.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+    }
+
+    fn get_or_insert(&mut self, key: String) -> &mut Node {
+        if let Some(pos) = self.children.iter().position(|(k, _)| *k == key) {
+            &mut self.children[pos].1
+        } else {
+            self.children.push((key, Node::default()));
+            &mut self.children.last_mut().unwrap().1
+        }
+    }
 }
 
 impl PrefixTree {
     pub fn add(&mut self, domain: String) {
-        fn add(node: &mut BTreeMap<String, Node>, parts: &mut Vec<String>) {
-            if let Some(part) = parts.pop() {
-                let terminal = parts.is_empty();
-                node.entry(part)
-                    .and_modify(|x| {
-                        if terminal {
-                            x.terminal = true;
-                            x.children.clear();
-                        } else if !x.terminal {
-                            add(&mut x.children, parts);
-                        }
-                    })
-                    .or_insert_with(|| {
-                        let mut new_node = Node {
-                            children: BTreeMap::new(),
-                            terminal,
-                        };
-                        if !terminal {
-                            add(&mut new_node.children, parts);
-                        }
-                        new_node
-                    });
+        let domain = domain.trim_matches('.');
+        if domain.is_empty() {
+            self.root.terminal = true;
+            return;
+        }
+        let mut parts = domain.rsplit('.').filter(|p| !p.is_empty()).peekable();
+        let mut node = &mut self.root;
+        while let Some(part) = parts.next() {
+            let is_last = parts.peek().is_none();
+            node = node.get_or_insert(part.to_string());
+            if is_last {
+                node.terminal = true;
+                node.children.clear();
+            }
+            if node.terminal && !is_last {
+                return;
             }
         }
-        let mut domain: Vec<_> = domain.split('.').map(ToOwned::to_owned).collect();
-
-        add(&mut self.root.children, &mut domain)
     }
 
     pub fn contains(&self, domain: &str) -> bool {
-        fn contains(node: &Node, parts: &mut Vec<&str>) -> bool {
-            if let Some(part) = parts.pop() {
-                if node.terminal {
-                    return true;
-                }
-                if let Some(node) = node.children.get(part) {
-                    contains(node, parts)
-                } else {
-                    node.children.contains_key("*")
-                }
+        let mut node = &self.root;
+        for part in domain.rsplit('.').filter(|p| !p.is_empty()) {
+            if node.terminal {
+                return true;
+            }
+            if let Some(child) = node.find(part) {
+                node = child;
             } else {
-                node.terminal || node.children.contains_key("*")
+                return node.find("*").is_some();
             }
         }
-
-        let mut domain: Vec<_> = domain.split('.').collect();
-        contains(&self.root, &mut domain)
+        node.terminal || node.find("*").is_some()
     }
 }
 
@@ -94,9 +93,8 @@ mod tests {
         assert!(tree.contains("api.test.ru"));
         assert!(tree.contains("anything.test.ru"));
         // children should be pruned
-        assert!(tree.root.children["ru"].children["test"]
-            .children
-            .is_empty());
+        let test_node = tree.root.find("ru").unwrap().find("test").unwrap();
+        assert!(test_node.children.is_empty());
     }
 
     #[test]
@@ -109,9 +107,36 @@ mod tests {
         assert!(tree.contains("www.test.ru"));
         assert!(tree.contains("anything.test.ru"));
         // children should stay empty — www.test.ru is redundant
-        assert!(tree.root.children["ru"].children["test"]
-            .children
-            .is_empty());
+        let test_node = tree.root.find("ru").unwrap().find("test").unwrap();
+        assert!(test_node.children.is_empty());
+    }
+
+    #[test]
+    fn wildcard_matches_any_subdomain() {
+        let mut tree = PrefixTree::default();
+        tree.add("*.example.com".to_owned());
+
+        // wildcard matches any single label
+        assert!(tree.contains("www.example.com"));
+        assert!(tree.contains("api.example.com"));
+        assert!(tree.contains("anything.example.com"));
+        // wildcard also matches deeper subdomains (because * node is terminal,
+        // and terminal means "everything below matches")
+        assert!(tree.contains("deep.sub.example.com"));
+        // bare domain matches too (the for loop ends, then node.find("*").is_some())
+        assert!(tree.contains("example.com"));
+        // unrelated domain does not match
+        assert!(!tree.contains("example.org"));
+        assert!(!tree.contains("com"));
+
+        // wildcard scoped to specific subdomain
+        tree.add("*.sub.example.org".to_owned());
+        assert!(tree.contains("www.sub.example.org"));
+        assert!(tree.contains("deep.nested.sub.example.org"));
+        assert!(tree.contains("sub.example.org"));
+        // other subdomains of example.org should NOT match
+        assert!(!tree.contains("other.example.org"));
+        assert!(!tree.contains("example.org"));
     }
 
     #[quickcheck]
