@@ -4,13 +4,14 @@ use std::{
     time::Duration,
 };
 
-use crate::files_stream::create_files_stream;
 use anyhow::Result;
 use futures_util::stream::Stream;
 use log::{error, info, warn};
 use regex::Regex;
 use tokio_stream::StreamExt;
 use url::Url;
+
+use crate::files_stream::create_files_stream;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum MatchResult<'a> {
@@ -66,152 +67,157 @@ pub fn filters_stream(
 }
 
 pub struct DomainsFilter {
-    allow_domains: HashMap<u64, String>,
-    block_domains: HashMap<u64, String>,
-    allow_rules: Vec<CompiledRule>,
-    block_rules: Vec<CompiledRule>,
+    allow_matcher: RulesMatcher,
+    block_matcher: RulesMatcher,
 }
 
 impl std::fmt::Debug for DomainsFilter {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DomainsFilter")
-            .field("allow_domains", &self.allow_domains.len())
-            .field("block_domains", &self.block_domains.len())
-            .field("allow_rules", &self.allow_rules.len())
-            .field("block_rules", &self.block_rules.len())
+            .field("allow_rules", &self.allow_matcher.rules.len())
+            .field("block_rules", &self.block_matcher.rules.len())
             .finish()
-    }
-}
-
-fn hash_domain(domain: &str) -> u64 {
-    let normalized = domain.to_ascii_lowercase();
-    let mut hasher = DefaultHasher::new();
-    normalized.hash(&mut hasher);
-    hasher.finish()
-}
-
-fn domain_in_map<'a>(map: &'a HashMap<u64, String>, domain: &str) -> Option<&'a str> {
-    let mut remaining = domain;
-    loop {
-        if let Some(rule) = map.get(&hash_domain(remaining)) {
-            return Some(rule);
-        }
-        match remaining.find('.') {
-            Some(pos) => remaining = &remaining[pos + 1..],
-            None => return None,
-        }
     }
 }
 
 impl DomainsFilter {
     pub fn new(rules: &str) -> Result<Self> {
-        let mut allow_domains = HashMap::new();
-        let mut block_domains = HashMap::new();
-        let mut allow_rules = Vec::new();
-        let mut block_rules = Vec::new();
+        let all_rules: Vec<Rule> = rules
+            .lines()
+            .map(|x| x.trim())
+            .filter(|x| !x.is_empty() && !x.starts_with('!') && !x.contains('$'))
+            .map(Rule::new)
+            .collect::<Result<Vec<Rule>>>()?;
 
-        for line in rules.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('!') || line.contains('$') {
-                continue;
-            }
+        let (allow, block): (Vec<_>, Vec<_>) = all_rules.into_iter().partition(|x| x.is_allow_rule);
 
-            let (is_allow, rule_text) = match line.strip_prefix("@@") {
-                Some(stripped) => (true, stripped),
-                None => (false, line),
-            };
+        let allow_matcher = RulesMatcher::new(allow);
+        let block_matcher = RulesMatcher::new(block);
 
-            let Some(parsed) = parse_adguard_rule(rule_text) else {
-                continue;
-            };
-
-            match parsed {
-                ParsedRule::Domain(domain) => {
-                    let hash = hash_domain(&domain);
-                    let original = line.to_owned();
-                    if is_allow {
-                        allow_domains.insert(hash, original);
-                    } else {
-                        block_domains.insert(hash, original);
-                    }
-                }
-                ParsedRule::Compiled(compiled) => {
-                    if is_allow {
-                        allow_rules.push(compiled);
-                    } else {
-                        block_rules.push(compiled);
-                    }
-                }
-            }
-        }
-
-        let count_by_type = |rules: &[CompiledRule]| {
-            let (mut contains, mut glob, mut regex) = (0, 0, 0);
-            for rule in rules {
-                match &rule.matcher {
-                    RuleMatcher::Contains(_) => contains += 1,
-                    RuleMatcher::DomainGlob { .. } => glob += 1,
-                    RuleMatcher::Regex(_) => regex += 1,
-                }
-            }
-            (contains, glob, regex)
-        };
-        let (ac, ag, ar) = count_by_type(&allow_rules);
-        let (bc, bg, br) = count_by_type(&block_rules);
         info!(
-            "Filter: {} allow domains, {} block domains, allow rules: {} contains / {} glob / {} regex, block rules: {} contains / {} glob / {} regex",
-            allow_domains.len(), block_domains.len(), ac, ag, ar, bc, bg, br
+            "Filter: {} allow rules, {} block rules",
+            allow_matcher.rules.len(),
+            block_matcher.rules.len()
         );
 
         Ok(Self {
-            allow_domains,
-            block_domains,
-            allow_rules,
-            block_rules,
+            allow_matcher,
+            block_matcher,
         })
     }
 
     pub fn match_domain(&self, domain: &str) -> Option<MatchResult<'_>> {
-        if let Some(rule) = domain_in_map(&self.allow_domains, domain) {
-            return Some(MatchResult::Allow(rule));
+        if let Some(rule) = self.allow_matcher.match_domain(domain) {
+            return Some(MatchResult::Allow(&rule.rule));
         }
-        if let Some(rule) = self.allow_rules.iter().find(|r| r.is_match(domain)) {
-            return Some(MatchResult::Allow(&rule.original));
-        }
-        if let Some(rule) = domain_in_map(&self.block_domains, domain) {
-            return Some(MatchResult::Block(rule));
-        }
-        if let Some(rule) = self.block_rules.iter().find(|r| r.is_match(domain)) {
-            return Some(MatchResult::Block(&rule.original));
+        if let Some(rule) = self.block_matcher.match_domain(domain) {
+            return Some(MatchResult::Block(&rule.rule));
         }
         None
     }
 }
 
-// --- Rule parsing ---
+// --- Matching engine ---
 
-enum ParsedRule {
-    Domain(String),
-    Compiled(CompiledRule),
+struct RulesMatcher {
+    substrs: HashMap<u64, Vec<usize>>,
+    rules: Vec<Rule>,
 }
 
-struct CompiledRule {
-    original: String,
+impl RulesMatcher {
+    fn new(rules: Vec<Rule>) -> Self {
+        let substrs = rules
+            .iter()
+            .map(|rule| {
+                rule.rule
+                    .split(|c| c != '_' && c != '-' && c != '.' && !char::is_alphanumeric(c))
+                    .max_by_key(|x| x.len())
+                    .unwrap_or("")
+                    .trim_matches('.')
+            })
+            .enumerate()
+            .map(|(i, s)| (Self::hash(s), i))
+            .fold(HashMap::<_, Vec<_>>::new(), |mut acc, (h, i)| {
+                acc.entry(h).or_default().push(i);
+                acc
+            });
+        Self { substrs, rules }
+    }
+
+    fn hash(s: &str) -> u64 {
+        let mut h = DefaultHasher::new();
+        s.hash(&mut h);
+        h.finish()
+    }
+
+    fn match_domain(&self, domain: &str) -> Option<&Rule> {
+        let dots = std::iter::once(0)
+            .chain(
+                domain
+                    .char_indices()
+                    .filter_map(|(i, c)| (c == '.').then_some(i)),
+            )
+            .chain(std::iter::once(domain.len()))
+            .collect::<Vec<_>>();
+        dots.iter()
+            .enumerate()
+            .flat_map(|(d_idx, &i)| {
+                dots[d_idx + 1..]
+                    .iter()
+                    .map(move |&j| Self::hash(domain[i..j].trim_matches('.')))
+            })
+            .find_map(|h| {
+                self.substrs.get(&h)?.iter().find_map(|idx| {
+                    let rule = &self.rules[*idx];
+                    rule.is_match(domain).then_some(rule)
+                })
+            })
+    }
+}
+
+// --- Rule ---
+
+struct Rule {
     matcher: RuleMatcher,
+    rule: String,
+    is_allow_rule: bool,
 }
 
+/// Fast matcher that avoids regex when possible.
 enum RuleMatcher {
-    /// Domain contains this substring
+    /// `||domain.com^` — exact domain or subdomain match
+    Domain(String),
+    /// `.substring` or `*substring^` — substring match
     Contains(String),
-    /// `||` anchor with wildcard: at domain boundary starts with prefix, domain ends with suffix
+    /// `||prefix*.suffix^` — glob with single wildcard
     DomainGlob { prefix: String, suffix: String },
-    /// Real regex (only for `/regex/` rules and rare complex patterns)
-    Regex(Regex),
+    /// `/regex/` or complex patterns — compiled regex (lazy)
+    LazyRegex(std::sync::OnceLock<Result<Regex, regex::Error>>, String),
 }
 
-impl CompiledRule {
+impl Rule {
+    fn new(rule: &str) -> Result<Self> {
+        let (is_allow_rule, rule_text) = match rule.strip_prefix("@@") {
+            Some(stripped) => (true, stripped),
+            None => (false, rule),
+        };
+
+        let matcher = parse_matcher(rule_text);
+
+        Ok(Self {
+            matcher,
+            rule: rule_text.to_owned(),
+            is_allow_rule,
+        })
+    }
+
     fn is_match(&self, domain: &str) -> bool {
         match &self.matcher {
+            RuleMatcher::Domain(d) => {
+                domain == d
+                    || domain.ends_with(d.as_str())
+                        && domain.as_bytes().get(domain.len() - d.len() - 1) == Some(&b'.')
+            }
             RuleMatcher::Contains(s) => domain.contains(s.as_str()),
             RuleMatcher::DomainGlob { prefix, suffix } => {
                 if !domain.ends_with(suffix.as_str()) {
@@ -229,10 +235,30 @@ impl CompiledRule {
                 }
                 false
             }
-            RuleMatcher::Regex(re) => re.is_match(domain),
+            RuleMatcher::LazyRegex(cell, pattern) => {
+                let regex = cell.get_or_init(|| Regex::new(pattern));
+                match regex {
+                    Ok(re) => re.is_match(domain),
+                    Err(err) => {
+                        warn!("Bad regex {:?} from rule {}", err, pattern);
+                        false
+                    }
+                }
+            }
         }
     }
 }
+
+impl std::fmt::Debug for Rule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Rule")
+            .field("rule", &self.rule)
+            .field("is_allow_rule", &self.is_allow_rule)
+            .finish()
+    }
+}
+
+// --- Rule parsing ---
 
 fn strip_tail(s: &str) -> &str {
     s.strip_suffix("^|")
@@ -247,51 +273,37 @@ fn is_domain_chars(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
 }
 
-/// Parse an AdGuard rule into either a domain hash lookup or a compiled matcher.
-/// Returns None for rules that fail to compile.
-fn parse_adguard_rule(rule: &str) -> Option<ParsedRule> {
-    // /regex/ → real regex
+fn parse_matcher(rule: &str) -> RuleMatcher {
+    // /regex/ → lazy regex with the inner pattern
     if rule.starts_with('/') && rule.ends_with('/') && rule.len() > 1 {
         let pattern = rule[1..rule.len() - 1].replace(r"\/", "/");
-        return match Regex::new(&pattern) {
-            Ok(re) => Some(ParsedRule::Compiled(CompiledRule {
-                original: rule.to_owned(),
-                matcher: RuleMatcher::Regex(re),
-            })),
-            Err(err) => {
-                warn!("Bad regex from rule {}: {:?}", rule, err);
-                None
-            }
-        };
+        return RuleMatcher::LazyRegex(std::sync::OnceLock::new(), pattern);
     }
 
-    // ||domain or ||prefix*suffix → domain hash or glob
+    // || anchored
     if let Some(inner) = rule.strip_prefix("||") {
         let inner = strip_tail(inner);
         if !inner.contains('*') && is_domain_chars(inner) {
-            return Some(ParsedRule::Domain(inner.to_owned()));
+            return RuleMatcher::Domain(inner.to_ascii_lowercase());
         }
         if let Some(pos) = inner.find('*') {
             let suffix = &inner[pos + 1..];
             if !suffix.contains('*') {
-                return Some(ParsedRule::Compiled(CompiledRule {
-                    original: rule.to_owned(),
-                    matcher: RuleMatcher::DomainGlob {
-                        prefix: inner[..pos].to_owned(),
-                        suffix: suffix.to_owned(),
-                    },
-                }));
+                return RuleMatcher::DomainGlob {
+                    prefix: inner[..pos].to_owned(),
+                    suffix: suffix.to_owned(),
+                };
             }
         }
-        return Some(ParsedRule::Compiled(compile_to_regex(rule)));
+        return RuleMatcher::LazyRegex(std::sync::OnceLock::new(), adguard_to_regex(rule));
     }
 
-    // ://domain^ or ://*.domain^ → domain hash
+    // :// prefix → domain or lazy regex
     if let Some(inner) = rule.strip_prefix("://") {
         let inner = inner.strip_prefix("*.").unwrap_or(inner);
         let inner = strip_tail(inner);
         if !inner.contains('*') && is_domain_chars(inner) {
-            return Some(ParsedRule::Domain(inner.to_owned()));
+            return RuleMatcher::Domain(inner.to_ascii_lowercase());
         }
     }
 
@@ -299,28 +311,11 @@ fn parse_adguard_rule(rule: &str) -> Option<ParsedRule> {
     let stripped = rule.strip_prefix('*').unwrap_or(rule);
     let stripped = strip_tail(stripped);
     if !stripped.contains('*') && !stripped.is_empty() {
-        return Some(ParsedRule::Compiled(CompiledRule {
-            original: rule.to_owned(),
-            matcher: RuleMatcher::Contains(stripped.to_owned()),
-        }));
+        return RuleMatcher::Contains(stripped.to_owned());
     }
 
-    // Fallback: regex
-    Some(ParsedRule::Compiled(compile_to_regex(rule)))
-}
-
-fn compile_to_regex(rule: &str) -> CompiledRule {
-    let regex_str = adguard_to_regex(rule);
-    CompiledRule {
-        original: rule.to_owned(),
-        matcher: match Regex::new(&regex_str) {
-            Ok(re) => RuleMatcher::Regex(re),
-            Err(err) => {
-                warn!("Bad regex {:?} from rule {}", err, rule);
-                RuleMatcher::Contains("\x00".to_owned())
-            }
-        },
-    }
+    // Fallback: lazy regex
+    RuleMatcher::LazyRegex(std::sync::OnceLock::new(), adguard_to_regex(rule))
 }
 
 fn adguard_to_regex(rule: &str) -> String {
@@ -379,7 +374,7 @@ mod tests {
         );
         assert_eq!(
             filter.match_domain("dsa.omniture.walmart.com"),
-            Some(MatchResult::Allow("@@||omniture.walmart.com^|"))
+            Some(MatchResult::Allow("||omniture.walmart.com^|"))
         );
         assert_eq!(
             filter.match_domain("asdasdasd.....3.n.2.1.l50.js"),
@@ -391,7 +386,7 @@ mod tests {
         );
         assert_eq!(
             filter.match_domain("ya.ru"),
-            Some(MatchResult::Allow("@@||ya.ru"))
+            Some(MatchResult::Allow("||ya.ru"))
         );
         assert_eq!(filter.match_domain("durasite.net^"), None);
         assert_eq!(filter.match_domain("play*.videos.vidto.me.asd"), None);
@@ -399,7 +394,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_rules_in_memory() {
+    fn simple_rules() {
         let filter = r"
 ||simple-block.com^
 ||another-block.org^
@@ -422,7 +417,7 @@ mod tests {
         );
         assert_eq!(
             filter.match_domain("allowed.com"),
-            Some(MatchResult::Allow("@@||allowed.com^"))
+            Some(MatchResult::Allow("||allowed.com^"))
         );
         assert_eq!(filter.match_domain("google.com"), None);
     }
@@ -457,7 +452,6 @@ mod tests {
             );
         }
 
-        // Should not match unrelated domains
         assert_eq!(filter.match_domain("notexact.com"), None);
         assert_eq!(filter.match_domain("other.org"), None);
     }
@@ -542,7 +536,7 @@ mod tests {
 
         assert_eq!(
             filter.match_domain("allowed.blocked.com"),
-            Some(MatchResult::Allow("@@||allowed.blocked.com^"))
+            Some(MatchResult::Allow("||allowed.blocked.com^"))
         );
         assert_eq!(
             filter.match_domain("other.blocked.com"),
@@ -550,7 +544,7 @@ mod tests {
         );
         assert_eq!(
             filter.match_domain("ads.net"),
-            Some(MatchResult::Allow("@@||ads.net^"))
+            Some(MatchResult::Allow("||ads.net^"))
         );
     }
 
@@ -558,5 +552,21 @@ mod tests {
     fn dollar_rules_are_skipped() {
         let filter = DomainsFilter::new("||example.com^$badfilter").unwrap();
         assert_eq!(filter.match_domain("example.com"), None);
+    }
+
+    #[test]
+    fn wildcard_matches_any_subdomain() {
+        let filter = DomainsFilter::new("||play*.vidto.me^").unwrap();
+
+        assert_eq!(
+            filter.match_domain("playfoo.vidto.me"),
+            Some(MatchResult::Block("||play*.vidto.me^"))
+        );
+        assert_eq!(
+            filter.match_domain("sub.playfoo.vidto.me"),
+            Some(MatchResult::Block("||play*.vidto.me^"))
+        );
+        assert_eq!(filter.match_domain("notplay.vidto.me"), None);
+        assert_eq!(filter.match_domain("playfoo.other.me"), None);
     }
 }
