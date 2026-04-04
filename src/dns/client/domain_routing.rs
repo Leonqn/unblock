@@ -1,15 +1,15 @@
 use anyhow::Result;
 
 use crate::{
+    blacklist::DomainHashSet,
     dns::message::{Query, Response},
-    prefix_tree::PrefixTree,
 };
 
 use super::DnsClient;
 use async_trait::async_trait;
 
 pub struct DomainRoutingClient<C> {
-    routes: Vec<(PrefixTree, Box<dyn DnsClient>)>,
+    routes: Vec<(DomainHashSet, Box<dyn DnsClient>)>,
     default_client: C,
 }
 
@@ -17,7 +17,7 @@ impl<C> DomainRoutingClient<C>
 where
     C: DnsClient,
 {
-    pub fn new(routes: Vec<(PrefixTree, Box<dyn DnsClient>)>, default_client: C) -> Self {
+    pub fn new(routes: Vec<(DomainHashSet, Box<dyn DnsClient>)>, default_client: C) -> Self {
         Self {
             routes,
             default_client,

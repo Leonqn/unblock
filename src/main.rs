@@ -11,6 +11,7 @@ use crate::config::{AdsBlock, Config, DnsRoute, Reroute, Retry};
 use crate::web::AppState;
 use anyhow::Result;
 use arc_swap::ArcSwapOption;
+use blacklist::DomainHashSet;
 use dns::client::{
     AdsBlockClient, CachedClient, ChoiceClient, DnsCache, DnsClient, DohClient,
     DomainRoutingClient, Either, HostsClient, RerouteClient, RetryClient, RoundRobinClient,
@@ -20,7 +21,6 @@ use domains_filter::DomainsFilter;
 use futures_util::{stream, StreamExt};
 use last_item::LastItem;
 use log::info;
-use prefix_tree::PrefixTree;
 use reroute::Rerouter;
 use routers::KeeneticClient;
 use stats::StatsCollector;
@@ -34,7 +34,6 @@ mod dns;
 mod domains_filter;
 mod files_stream;
 mod last_item;
-mod prefix_tree;
 mod reroute;
 mod routers;
 mod stats;
@@ -279,7 +278,7 @@ fn create_reroute_if_needed(
                 blacklist_last_items.push(last_item);
             }
             if blacklist_last_items.is_empty() {
-                let empty: Box<dyn blacklist::Blacklist> = Box::new(PrefixTree::default());
+                let empty: Box<dyn blacklist::Blacklist> = Box::new(DomainHashSet::default());
                 let stream = stream::iter([empty]).chain(stream::pending());
                 blacklist_last_items.push(LastItem::new(stream));
             }
@@ -370,11 +369,11 @@ fn create_domain_routing_if_needed(
                         })
                         .collect::<Result<_>>()?;
                     let rr = RoundRobinClient::new(clients);
-                    let mut tree = PrefixTree::default();
+                    let mut domain_set = DomainHashSet::default();
                     for domain in route.domains {
-                        tree.add(domain);
+                        domain_set.insert(&domain);
                     }
-                    Ok((tree, Box::new(rr) as Box<dyn DnsClient>))
+                    Ok((domain_set, Box::new(rr) as Box<dyn DnsClient>))
                 })
                 .collect::<Result<Vec<_>>>()?;
             Ok(Either::Left(DomainRoutingClient::new(
