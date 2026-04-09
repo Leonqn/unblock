@@ -4,9 +4,11 @@ use std::{
     sync::Arc,
 };
 
+use std::time::Duration;
+
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use log::error;
+use log::{error, info};
 use tokio::{
     net::UdpSocket,
     sync::{
@@ -30,9 +32,36 @@ pub struct UdpClient {
 
 impl UdpClient {
     pub async fn new(server_addr: SocketAddr) -> Result<Self> {
-        let socket = UdpSocket::bind("0.0.0.0:0".parse::<SocketAddr>().unwrap()).await?;
+        use fure::backoff::fixed;
+        use fure::policies::{backoff, cond};
+
+        let policy = cond(
+            backoff(fixed(Duration::from_secs(5))),
+            |result: Option<Result<&UdpSocket, &std::io::Error>>| {
+                if let Some(Err(err)) = result {
+                    info!(
+                        "Network not ready, retrying connection to {} in 5s: {}",
+                        server_addr, err
+                    );
+                    true
+                } else {
+                    false
+                }
+            },
+        );
+
+        let socket = fure::retry(
+            || async {
+                let sock = UdpSocket::bind("0.0.0.0:0".parse::<SocketAddr>().unwrap()).await?;
+                sock.connect(server_addr).await?;
+                Ok::<_, std::io::Error>(sock)
+            },
+            policy,
+        )
+        .await
+        .expect("Retry policy never stops");
+
         let (tx, rx) = unbounded_channel();
-        socket.connect(server_addr).await?;
         tokio::spawn(responses_handler(socket, rx));
 
         Ok(Self {

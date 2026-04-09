@@ -2,7 +2,22 @@
 
 DNS-прокси с выборочной маршрутизацией трафика и блокировкой рекламы для роутеров Keenetic.
 
-## Установка на роутер Keenetic (Entware)
+## Быстрая установка (скрипт)
+
+1. Положите `config.yml` рядом с `install.sh`
+2. Скопируйте оба файла на роутер (scp, флешка и т.д.)
+3. Запустите на роутере:
+
+```bash
+chmod +x install.sh
+./install.sh
+```
+
+Скрипт автоматически определит архитектуру роутера, скачает нужный бинарник с [GitHub Releases](https://github.com/Leonqn/reroute/releases), создаст все директории, init-скрипт, logrotate и crontab.
+
+После установки останется только отключить встроенный DNS (см. [шаг 4](#4-отключение-встроенного-dns)) и запустить сервис.
+
+## Ручная установка на роутер Keenetic (Entware)
 
 ### Требования
 
@@ -130,6 +145,11 @@ opkg install ca-certificates ca-bundle logrotate
 ```
 0 * * * * /opt/sbin/logrotate /opt/etc/logrotate.conf
 ```
+
+> **Примечание:** На свежей установке Entware crontab может не существовать. Это нормально — при первом вызове `crontab -e` он будет создан автоматически. Если `crontab -e` не работает, создайте файл вручную:
+> ```bash
+> echo "0 * * * * /opt/sbin/logrotate /opt/etc/logrotate.conf" | crontab -
+> ```
 
 ### 8. Запуск
 
