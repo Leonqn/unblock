@@ -371,7 +371,8 @@ fn create_domain_routing_if_needed(
                     let rr = RoundRobinClient::new(clients);
                     let mut domain_set = DomainHashSet::default();
                     for domain in route.domains {
-                        domain_set.insert(&domain);
+                        let stripped = domain.strip_prefix("*.").unwrap_or(&domain);
+                        domain_set.insert(stripped);
                     }
                     Ok((domain_set, Box::new(rr) as Box<dyn DnsClient>))
                 })
