@@ -43,6 +43,11 @@ esac
 ASSET_NAME="${BINARY_NAME}-${TARGET}"
 echo "Detected architecture: $ARCH -> $TARGET"
 
+# Install dependencies
+echo "Installing dependencies..."
+opkg update
+opkg install curl ca-certificates ca-bundle logrotate cron
+
 # Get latest release tag
 echo "Fetching latest release..."
 LATEST_TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
@@ -56,14 +61,9 @@ echo "Latest release: $LATEST_TAG"
 
 DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${LATEST_TAG}/${ASSET_NAME}"
 
-# Install dependencies
-echo "Installing dependencies..."
-opkg update
-opkg install ca-certificates ca-bundle logrotate
-
 # Create directories
 echo "Creating directories..."
-mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR" "$INIT_DIR" "$LOGROTATE_DIR"
+mkdir -p "$INSTALL_DIR" "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR" "$INIT_DIR" "$LOGROTATE_DIR" /opt/var/spool/cron/crontabs
 
 # Download binary
 echo "Downloading $ASSET_NAME..."
