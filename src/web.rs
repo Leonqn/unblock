@@ -255,7 +255,7 @@ async fn handle_request(
                     let total_queries: u64 = stats.domain_counts.values().sum();
                     let mut top_domains: Vec<(String, u64)> =
                         stats.domain_counts.into_iter().collect();
-                    top_domains.sort_by(|a, b| b.1.cmp(&a.1));
+                    top_domains.sort_by_key(|b| std::cmp::Reverse(b.1));
                     top_domains.truncate(top_n);
                     let recent = stats
                         .recent_requests
