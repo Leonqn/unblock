@@ -1,12 +1,14 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use log::error;
-use std::{future::Future, net::SocketAddr, sync::Arc};
+use std::{future::Future, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, UdpSocket},
 };
 use tokio_stream::StreamExt;
+
+const HANDLER_TIMEOUT: Duration = Duration::from_secs(5);
 
 use super::{
     create_udp_dns_stream,
@@ -82,7 +84,11 @@ where
                 let socket = socket.clone();
                 tokio::spawn(async move {
                     let handle_and_send = async {
-                        let response = handler_fut.await?;
+                        let response = tokio::time::timeout(HANDLER_TIMEOUT, handler_fut)
+                            .await
+                            .map_err(|_| {
+                            anyhow!("DNS handler timed out after {:?}", HANDLER_TIMEOUT)
+                        })??;
                         socket.send_to(response.bytes(), &sender).await?;
                         Ok::<_, anyhow::Error>(())
                     };
