@@ -80,6 +80,12 @@ impl DnsClient for DohClient {
             let query_ecs = query.with_ecs(self.ecs_override_ip);
             let mut retry_response = self.do_request(&query_ecs).await?;
             retry_response.append_trace("ecs-override-retry");
+            if retry_response.has_loopback() {
+                return Err(anyhow!(
+                    "DoH still returned loopback for {} after ECS override",
+                    domains
+                ));
+            }
             return Ok(retry_response);
         }
         Ok(response)
